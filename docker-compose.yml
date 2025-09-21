@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # TimescaleDB数据库服务
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: cryptofeed-timescaledb
+    environment:
+      POSTGRES_DB: cryptofeed
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d
+    networks:
+      - cryptofeed-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cryptofeed"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Cryptofeed监控服务
+  cryptofeed-monitor:
+    build: .
+    container_name: cryptofeed-monitor
+    environment:
+      # 数据库配置
+      DB_HOST: timescaledb
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_NAME: cryptofeed
+
+      # 连接池配置
+      STREAMS_PER_CONNECTION: 1000
+      AUTO_SCALING_ENABLED: "true"
+      SYMBOL_CHECK_INTERVAL: 300
+
+      # 监控配置
+      HEALTH_CHECK_PORT: 8080
+      METRICS_ENABLED: "true"
+
+      # WAL配置
+      WAL_ENABLED: "true"
+      WAL_SYNC_INTERVAL: 5
+
+      # 日志级别
+      LOG_LEVEL: INFO
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./config:/app/config
+    networks:
+      - cryptofeed-network
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Grafana监控面板（可选）
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cryptofeed-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - cryptofeed-network
+    restart: unless-stopped
+    depends_on:
+      - timescaledb
+    profiles:
+      - monitoring
+
+  # Prometheus监控（可选）
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cryptofeed-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - cryptofeed-network
+    restart: unless-stopped
+    depends_on:
+      - cryptofeed-monitor
+    profiles:
+      - monitoring
+
+volumes:
+  timescale_data:
+    driver: local
+  grafana_data:
+    driver: local
+  prometheus_data:
+    driver: local
+
+networks:
+  cryptofeed-network:
+    driver: bridge
