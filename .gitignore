@@ -108,3 +108,69 @@ ENV/
 
 # PyCharm
 .idea/
+
+# ========== Project Specific ==========
+# Claude AI Assistant
+.claude/
+
+# Logs
+logs/
+*.log
+*.log.*
+cryptofeed_*.log
+
+# Database dumps/backups
+*.sql.backup
+*.dump
+db_backups/
+
+# Local config (with sensitive data)
+config/local.yaml
+config/*.local.yaml
+config/secrets.yaml
+
+# Test files
+test_*.py
+temp_*.py
+tmp_*.py
+demo_*.py
+*_test.py
+*_demo.py
+
+# Environment variables
+.env
+.env.*
+*.env
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Data files (if any)
+data/
+*.csv
+*.json
+*.parquet
+
+# Docker volumes
+docker_data/
+postgres_data/
+
+# Python notebooks (if used for testing)
+notebooks/
+*.ipynb
+
+# VSCode
+.vscode/
+
+# Monitoring output
+output/
+reports/

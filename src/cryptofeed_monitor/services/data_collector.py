@@ -8,11 +8,16 @@ import logging
 from typing import Dict, Any
 
 from cryptofeed import FeedHandler
-from cryptofeed.defines import *
+from cryptofeed.defines import (
+    TRADES, TICKER, FUNDING, L2_BOOK, LIQUIDATIONS, OPEN_INTEREST, INDEX, CANDLES
+)
 from cryptofeed.exchanges import BinanceFutures
-from cryptofeed.backends.postgres import PostgreSQL
+from cryptofeed.backends.postgres import (
+    TradePostgres, FundingPostgres, CandlesPostgres, TickerPostgres
+)
 
 from ..config import config
+from .connection_pool import DynamicConnectionPool
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +25,8 @@ logger = logging.getLogger(__name__)
 class DataCollectionService:
     """数据收集服务"""
 
-    def __init__(self, connection_pool):
-        self.connection_pool = connection_pool
+    def __init__(self):
+        self.connection_pool = DynamicConnectionPool()
         self.feed_handlers = []
         self.running = False
 
@@ -48,42 +53,53 @@ class DataCollectionService:
 
                 logger.info(f"连接{i}: 处理 {len(connection_symbols)} 个合约")
 
-                # 创建PostgreSQL后端
-                postgres_config = {
+                # 创建PostgreSQL配置
+                postgres_cfg = {
                     'host': config.get('database.host', '127.0.0.1'),
-                    'port': config.get('database.port', 5432),
                     'user': config.get('database.user', 'postgres'),
-                    'password': config.get('database.password', 'password'),
-                    'database': config.get('database.database', 'cryptofeed'),
+                    'pw': config.get('database.password', 'password'),
+                    'db': config.get('database.database', 'cryptofeed'),
                 }
 
                 # 创建FeedHandler
                 fh = FeedHandler()
 
-                # 添加币种和数据类型
+                # 添加交易数据监控
                 fh.add_feed(
-                    BinanceFutures,
-                    channels=[
-                        TRADES, TICKER, FUNDING, L2_BOOK,
-                        CANDLES_1m, CANDLES_5m, CANDLES_30m, CANDLES_4h, CANDLES_1d,
-                        LIQUIDATIONS, OPEN_INTEREST, INDEX
-                    ],
-                    symbols=connection_symbols,
-                    callbacks={
-                        TRADES: PostgreSQL(**postgres_config, table='trades'),
-                        TICKER: PostgreSQL(**postgres_config, table='ticker'),
-                        FUNDING: PostgreSQL(**postgres_config, table='funding'),
-                        L2_BOOK: PostgreSQL(**postgres_config, table='l2_book'),
-                        CANDLES_1m: PostgreSQL(**postgres_config, table='candles_1m'),
-                        CANDLES_5m: PostgreSQL(**postgres_config, table='candles_5m'),
-                        CANDLES_30m: PostgreSQL(**postgres_config, table='candles_30m'),
-                        CANDLES_4h: PostgreSQL(**postgres_config, table='candles_4h'),
-                        CANDLES_1d: PostgreSQL(**postgres_config, table='candles_1d'),
-                        LIQUIDATIONS: PostgreSQL(**postgres_config, table='liquidations'),
-                        OPEN_INTEREST: PostgreSQL(**postgres_config, table='open_interest'),
-                        INDEX: PostgreSQL(**postgres_config, table='index'),
-                    }
+                    BinanceFutures(
+                        symbols=connection_symbols,
+                        channels=[TRADES],
+                        callbacks={
+                            TRADES: [TradePostgres(**postgres_cfg)]
+                        }
+                    )
                 )
+
+                # 添加资金费率监控
+                fh.add_feed(
+                    BinanceFutures(
+                        symbols=connection_symbols,
+                        channels=[FUNDING],
+                        callbacks={
+                            FUNDING: [FundingPostgres(**postgres_cfg)]
+                        }
+                    )
+                )
+
+                # 添加K线监控 - 分别为每个时间周期创建
+                intervals = ['1m', '5m', '30m', '4h', '1d']
+                for interval in intervals:
+                    table_name = f'candles_{interval}'
+                    fh.add_feed(
+                        BinanceFutures(
+                            symbols=connection_symbols,
+                            channels=[CANDLES],
+                            callbacks={
+                                CANDLES: [CandlesPostgres(table=table_name, **postgres_cfg)]
+                            },
+                            candle_interval=interval
+                        )
+                    )
 
                 self.feed_handlers.append(fh)
 

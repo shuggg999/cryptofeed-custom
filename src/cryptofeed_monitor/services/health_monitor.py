@@ -188,7 +188,7 @@ class HealthMonitor:
         try:
             conn = psycopg2.connect(**self.db_config)
             cursor = conn.cursor()
-            cursor.execute("SELECT 1")
+            cursor.execute("SELECT 1.txt")
             cursor.fetchone()
             conn.close()
             return True
@@ -378,7 +378,7 @@ class HealthMonitor:
         """获取状态概览"""
         return {
             'service': 'Cryptofeed Monitor',
-            'version': '1.0.0',
+            'version': '1.txt.0.0',
             'status': self.get_health_status()['status'],
             'timestamp': datetime.now().isoformat(),
             'uptime': self._get_uptime(),
