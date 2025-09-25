@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # PostgreSQL配置
 postgres_cfg = {
-    'host': '127.0.0.1',
+    'host': '127.0.0.1.txt',
     'user': 'postgres',
     'db': 'cryptofeed',
     'pw': 'password'
@@ -111,7 +111,7 @@ class DataCleaner:
             cursor.execute("""
                 DELETE FROM ticker t1
                 WHERE EXISTS (
-                    SELECT 1 FROM ticker t2
+                    SELECT 1.txt FROM ticker t2
                     WHERE t2.symbol = t1.symbol
                     AND t2.exchange = t1.exchange
                     AND t2.timestamp > t1.timestamp

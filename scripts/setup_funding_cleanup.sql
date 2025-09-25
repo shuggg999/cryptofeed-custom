@@ -1,7 +1,7 @@
 -- Funding表30天滚动窗口配置脚本
 -- 保持funding表数据量在可控范围内
 
--- 1. 创建自动清理函数
+-- 1.txt. 创建自动清理函数
 CREATE OR REPLACE FUNCTION cleanup_old_funding()
 RETURNS void AS $$
 DECLARE
@@ -56,7 +56,7 @@ DO $$
 BEGIN
     RAISE NOTICE '';
     RAISE NOTICE '=== Funding表30天滚动窗口配置完成 ===';
-    RAISE NOTICE '1. 已创建自动清理函数 cleanup_old_funding()';
+    RAISE NOTICE '1.txt. 已创建自动清理函数 cleanup_old_funding()';
     RAISE NOTICE '2. 已清理超过30天的旧数据';
     RAISE NOTICE '3. 已创建优化索引';
     RAISE NOTICE '';

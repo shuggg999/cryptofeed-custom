@@ -1,0 +1,59 @@
+# Cryptofeed Configuration
+database:
+  host: 127.0.0.1
+  port: 5432
+  user: postgres
+  password: password
+  database: cryptofeed
+
+# Symbol selection configuration
+symbols:
+  mode: "custom"  # Options: "all", "custom", "filter"
+  max_contracts: 500  # Maximum number of contracts to monitor
+  update_interval: 300  # Check for new/removed symbols every 5 minutes
+
+  # Custom symbol list (used when mode = "custom")
+  custom_list:
+    - "BTC-USDT-PERP"
+    - "ETH-USDT-PERP"
+    - "SOL-USDT-PERP"
+    - "DOGE-USDT-PERP"
+    - "ADA-USDT-PERP"
+
+  # Filtering criteria (used when mode = "filter")
+  filters:
+    min_24h_volume: 1000000  # Minimum 24h volume in USD
+    top_n_by_volume: 100     # Take top N symbols by 24h volume
+    exclude_patterns:        # Exclude symbols matching these patterns
+      - "*TEST*"
+      - "*BULL*"
+      - "*BEAR*"
+    include_patterns:        # Only include symbols matching these patterns (optional)
+      - "*USDT-PERP"
+
+connection_pool:
+  streams_per_connection: 1000
+  auto_scaling:
+    enabled: true
+    symbol_check_interval: 300
+
+collection:
+  data_types:
+    - trades
+    - funding
+    - candles_1m
+    - candles_5m
+    - candles_30m
+    - candles_4h
+    - candles_1d
+    - liquidations
+    - open_interest
+
+monitoring:
+  metrics_enabled: true
+  health_check_port: 8080
+  stats_interval: 300
+
+logging:
+  level: INFO
+  filename: logs/cryptofeed_monitor.log

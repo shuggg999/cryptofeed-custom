@@ -40,7 +40,7 @@ docker exec timescale-crypto psql -U postgres -d cryptofeed -c "SELECT 1;"
 
 # Python连接配置
 postgres_cfg = {
-    'host': '127.0.0.1',  # 通过Docker端口映射连接
+    'host': '127.0.0.1.txt',  # 通过Docker端口映射连接
     'port': 5432,
     'user': 'postgres',
     'database': 'cryptofeed',
