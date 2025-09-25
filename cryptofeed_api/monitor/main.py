@@ -7,25 +7,28 @@ import time
 from datetime import datetime, timedelta
 from typing import List, Dict
 from pathlib import Path
+import clickhouse_connect
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from cryptofeed import FeedHandler
-from cryptofeed.backends.postgres import (
-    TradePostgres, FundingPostgres, CandlesPostgres, # TickerPostgres,
-    LiquidationsPostgres, OpenInterestPostgres
+from cryptofeed.backends.clickhouse import (
+    TradeClickHouse, FundingClickHouse, CandlesClickHouse, # TickerClickHouse,
+    LiquidationsClickHouse, OpenInterestClickHouse
 )
 import asyncio
-import psycopg2
 from datetime import datetime
 from cryptofeed.defines import TRADES, FUNDING, CANDLES, LIQUIDATIONS, OPEN_INTEREST  # TICKER removed
 from cryptofeed.exchanges import BinanceFutures
 
 # Import config and symbol manager
-from src.cryptofeed_monitor.config import config
-from src.cryptofeed_monitor.symbol_manager import symbol_manager
+from .config import config
+from .symbol_manager import symbol_manager
+
+# Import retry manager for error handling
+from ..core.retry_manager import retry_manager, with_retry, API_RETRY_CONFIG, safe_execute
 
 # Logging setup
 logging.basicConfig(
@@ -38,22 +41,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# PostgreSQL config from configuration file
-postgres_cfg = {
-    'host': config.get('database.host', '127.0.0.1'),
-    'user': config.get('database.user', 'postgres'),
-    'db': config.get('database.database', 'cryptofeed'),
-    'pw': config.get('database.password', 'password')
+# ClickHouse config from configuration file
+clickhouse_cfg = {
+    'host': config.get('clickhouse.host', 'localhost'),
+    'port': config.get('clickhouse.port', 8123),
+    'user': config.get('clickhouse.user', 'default'),
+    'password': config.get('clickhouse.password', 'password123'),
+    'database': config.get('clickhouse.database', 'cryptofeed'),
+    'secure': config.get('clickhouse.secure', False)
 }
 
 # Monitor config from configuration file
 INTERVALS = ['1m', '5m', '30m', '4h', '1d']
 
-class RateLimitedFundingPostgres:
+class RateLimitedFundingClickHouse:
     """Rate limited funding backend that saves at most once per minute per symbol"""
 
-    def __init__(self, **postgres_cfg):
-        self.postgres_cfg = postgres_cfg
+    def __init__(self, **clickhouse_cfg):
+        self.clickhouse_cfg = clickhouse_cfg
         self.last_save_times = {}  # {symbol: last_save_timestamp}
         self.save_interval = 60  # 60 seconds = 1.txt minute
 
@@ -90,42 +95,35 @@ class RateLimitedFundingPostgres:
     def _sync_save(self, funding, receipt_timestamp):
         """Synchronous database save"""
         try:
-            conn = psycopg2.connect(
-                host=self.postgres_cfg['host'],
-                user=self.postgres_cfg['user'],
-                password=self.postgres_cfg['pw'],
-                database=self.postgres_cfg['db']
+            client = clickhouse_connect.get_client(
+                host=self.clickhouse_cfg['host'],
+                port=self.clickhouse_cfg['port'],
+                user=self.clickhouse_cfg['user'],
+                password=self.clickhouse_cfg['password'],
+                database=self.clickhouse_cfg['database']
             )
 
-            cursor = conn.cursor()
-
-            # Insert funding data (convert timestamps to datetime objects)
-            cursor.execute("""
-                INSERT INTO funding (timestamp, receipt_timestamp, exchange, symbol, mark_price, rate, next_funding_time, predicted_rate)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                datetime.fromtimestamp(funding.timestamp) if funding.timestamp else None,
-                datetime.fromtimestamp(receipt_timestamp) if receipt_timestamp else None,
-                funding.exchange,
+            # Prepare data for ClickHouse insertion (match table schema order)
+            # Schema: timestamp, symbol, rate, next_funding_time, receipt_timestamp
+            data = [
+                datetime.fromtimestamp(funding.timestamp) if funding.timestamp else datetime.now(),
                 funding.symbol,
-                funding.mark_price,
-                funding.rate,
-                datetime.fromtimestamp(funding.next_funding_time) if funding.next_funding_time else None,
-                funding.predicted_rate
-            ))
+                float(funding.rate) if funding.rate else 0.0,
+                datetime.fromtimestamp(funding.next_funding_time) if funding.next_funding_time else datetime.now(),
+                datetime.fromtimestamp(receipt_timestamp) if receipt_timestamp else datetime.now()
+            ]
 
-            conn.commit()
-            cursor.close()
-            conn.close()
+            client.insert('funding', [data])
+            client.close()
 
         except Exception as e:
             logger.error(f"Sync database save error: {e}")
 
-class SmartTradePostgres:
+class SmartTradeClickHouse:
     """智能Trades后端 - 动态分层阈值 + 7天自动清理"""
 
-    def __init__(self, **postgres_cfg):
-        self.postgres_cfg = postgres_cfg
+    def __init__(self, **clickhouse_cfg):
+        self.clickhouse_cfg = clickhouse_cfg
         self.last_save_times = {}  # {symbol: last_save_timestamp}
         self.last_prices = {}      # {symbol: last_price} 用于价格变化检测
 
@@ -140,10 +138,16 @@ class SmartTradePostgres:
         self.time_intervals = [300, 600, 1200, 0]  # 各层时间间隔(秒) 0=禁用
         self.price_change_thresholds = [0.01, 0.008, 0.006, 0.005]  # 各层价格变化阈值
 
-        # 自动清理配置
+        # 自动清理配置 - 从配置文件读取不同数据类型保留期
         self.cleanup_interval = 3600         # 清理间隔 (1小时)
-        self.cleanup_days = 7                # 数据保留天数
         self.last_cleanup_time = 0
+
+        # 从配置文件读取数据保留策略
+        from .config import config
+        retention_config = config.get('data_retention', {})
+        self.trades_retention_days = retention_config.get('trades', 90)
+
+        logger.info(f"📋 Data retention policy - Trades: {self.trades_retention_days} days")
 
         # 统计信息
         self.stats = {
@@ -237,33 +241,28 @@ class SmartTradePostgres:
     def _sync_save(self, trade, receipt_timestamp):
         """同步数据库保存"""
         try:
-            conn = psycopg2.connect(
-                host=self.postgres_cfg['host'],
-                user=self.postgres_cfg['user'],
-                password=self.postgres_cfg['pw'],
-                database=self.postgres_cfg['db']
+            client = clickhouse_connect.get_client(
+                host=self.clickhouse_cfg['host'],
+                port=self.clickhouse_cfg['port'],
+                user=self.clickhouse_cfg['user'],
+                password=self.clickhouse_cfg['password'],
+                database=self.clickhouse_cfg['database']
             )
 
-            cursor = conn.cursor()
-
-            # 插入trade数据
-            cursor.execute("""
-                INSERT INTO trades (timestamp, receipt_timestamp, exchange, symbol, side, amount, price, id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                datetime.fromtimestamp(trade.timestamp) if trade.timestamp else None,
-                datetime.fromtimestamp(receipt_timestamp) if receipt_timestamp else None,
-                trade.exchange,
+            # Prepare data for ClickHouse insertion (match table schema order)
+            # Schema: timestamp, symbol, side, amount, price, trade_id, receipt_timestamp
+            data = [
+                datetime.fromtimestamp(trade.timestamp) if trade.timestamp else datetime.now(),
                 trade.symbol,
                 trade.side,
-                trade.amount,
-                trade.price,
-                trade.id if hasattr(trade, 'id') else None
-            ))
+                float(trade.amount),
+                float(trade.price),
+                str(trade.id) if hasattr(trade, 'id') and trade.id else '',
+                datetime.fromtimestamp(receipt_timestamp) if receipt_timestamp else datetime.now()
+            ]
 
-            conn.commit()
-            cursor.close()
-            conn.close()
+            client.insert('trades', [data])
+            client.close()
 
         except Exception as e:
             logger.error(f"Sync database save error: {e}")
@@ -285,34 +284,29 @@ class SmartTradePostgres:
             logger.error(f"Auto cleanup failed: {e}")
 
     def _sync_cleanup(self):
-        """同步清理旧数据"""
+        """同步清理旧数据 - ClickHouse使用TTL自动清理，此方法改为检查TTL状态"""
         try:
-            conn = psycopg2.connect(
-                host=self.postgres_cfg['host'],
-                user=self.postgres_cfg['user'],
-                password=self.postgres_cfg['pw'],
-                database=self.postgres_cfg['db']
+            client = clickhouse_connect.get_client(
+                host=self.clickhouse_cfg['host'],
+                port=self.clickhouse_cfg['port'],
+                user=self.clickhouse_cfg['user'],
+                password=self.clickhouse_cfg['password'],
+                database=self.clickhouse_cfg['database']
             )
 
-            cursor = conn.cursor()
+            # 检查TTL清理状态（ClickHouse会自动清理）
+            result = client.query(f"SELECT count() FROM trades WHERE timestamp < now() - INTERVAL {self.trades_retention_days} DAY")
+            old_count = result.result_rows[0][0] if result.result_rows else 0
 
-            # 删除超过7天的数据
-            cursor.execute(f"""
-                DELETE FROM trades
-                WHERE timestamp < NOW() - INTERVAL '{self.cleanup_days} days'
-            """)
+            if old_count == 0:
+                logger.info(f"✅ TTL cleanup working: No data older than {self.trades_retention_days} days found")
+            else:
+                logger.info(f"⏳ TTL cleanup pending: {old_count:,} records older than {self.trades_retention_days} days (will be auto-cleaned)")
 
-            deleted_count = cursor.rowcount
-            conn.commit()
-
-            if deleted_count > 0:
-                logger.info(f"🗑️ Auto cleanup: Removed {deleted_count:,} old trade records (>{self.cleanup_days} days)")
-
-            cursor.close()
-            conn.close()
+            client.close()
 
         except Exception as e:
-            logger.error(f"Sync cleanup failed: {e}")
+            logger.error(f"TTL status check failed: {e}")
 
     def print_stats(self):
         """打印统计信息"""
@@ -447,38 +441,36 @@ class SmartTradePostgres:
     def _sync_collect_stats(self, days):
         """同步收集统计数据"""
         try:
-            conn = psycopg2.connect(
-                host=self.postgres_cfg['host'],
-                user=self.postgres_cfg['user'],
-                password=self.postgres_cfg['pw'],
-                database=self.postgres_cfg['db']
+            client = clickhouse_connect.get_client(
+                host=self.clickhouse_cfg['host'],
+                port=self.clickhouse_cfg['port'],
+                user=self.clickhouse_cfg['user'],
+                password=self.clickhouse_cfg['password'],
+                database=self.clickhouse_cfg['database']
             )
 
-            cursor = conn.cursor()
-
-            # 查询最近N天的统计数据
-            cursor.execute(f"""
+            # 查询最近N天的统计数据 - 使用 toFloat64 避免 decimal 溢出
+            query = f"""
                 SELECT
                     symbol,
                     COUNT(*) as trade_count,
-                    SUM(amount * price) as total_volume,
-                    AVG(amount * price) as avg_trade_size,
-                    MAX(amount * price) as max_trade_size,
-                    PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY amount * price) as p90_trade_size
+                    SUM(toFloat64(amount) * toFloat64(price)) as total_volume,
+                    AVG(toFloat64(amount) * toFloat64(price)) as avg_trade_size,
+                    MAX(toFloat64(amount) * toFloat64(price)) as max_trade_size,
+                    quantile(0.9)(toFloat64(amount) * toFloat64(price)) as p90_trade_size
                 FROM trades
-                WHERE timestamp >= NOW() - INTERVAL '{days} days'
-                    AND amount * price > 0
+                WHERE timestamp >= now() - INTERVAL {days} DAY
+                    AND toFloat64(amount) * toFloat64(price) > 0
                 GROUP BY symbol
                 HAVING COUNT(*) >= 10
                 ORDER BY total_volume DESC
-            """)
+            """
 
-            results = cursor.fetchall()
-            cursor.close()
-            conn.close()
+            result = client.query(query)
+            client.close()
 
             symbol_stats = {}
-            for row in results:
+            for row in result.result_rows:
                 symbol, count, volume, avg_size, max_size, p90_size = row
                 symbol_stats[symbol] = {
                     'trade_count': int(count),
@@ -504,6 +496,13 @@ class BinanceAdvancedMonitor:
         self.start_time = None
         self.symbol_manager = symbol_manager
 
+        # 集成健康监控和辅助服务
+        self.health_monitor = None
+        self.temp_data_manager = None
+
+        # 集成重试管理器
+        self.retry_manager = retry_manager
+
         # Statistics
         self.stats = {
             'trades_count': 0,
@@ -520,16 +519,46 @@ class BinanceAdvancedMonitor:
             'errors': 0
         }
 
-        # Auto cleanup task
+        # Auto cleanup task - 从配置读取不同数据类型的保留期
         self.last_cleanup_time = 0
         self.cleanup_interval = 3600  # Clean up every hour
-        self.cleanup_days = 30  # Keep 30 days of data
+
+        # 从配置文件读取数据保留策略
+        retention_config = config.get('data_retention', {})
+        self.funding_retention_days = retention_config.get('funding', 365)
+        self.liquidations_retention_days = retention_config.get('liquidations', 180)
+        self.open_interest_retention_days = retention_config.get('open_interest', 365)
+
+        logger.info(f"📋 Data retention policy - Funding: {self.funding_retention_days} days, "
+                   f"Liquidations: {self.liquidations_retention_days} days, "
+                   f"Open Interest: {self.open_interest_retention_days} days")
 
         # Set up symbol change callbacks
         self.symbol_manager.set_callbacks(
             on_added=self.on_symbols_added,
             on_removed=self.on_symbols_removed
         )
+
+    async def initialize_auxiliary_services(self):
+        """初始化辅助服务"""
+        logger.info("🔧 Initializing auxiliary services...")
+
+        try:
+            # 初始化健康监控服务
+            if config.get('monitoring.metrics_enabled', True):
+                from .services.health_monitor import HealthMonitor
+                self.health_monitor = HealthMonitor()
+                logger.info(f"✅ Health monitor started on port {self.health_monitor.health_port}")
+
+            # 初始化临时数据管理器
+            from ..services.temp_data_manager import temp_data_manager
+            await temp_data_manager.start()
+            self.temp_data_manager = temp_data_manager
+            logger.info("✅ Temporary data manager started")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize auxiliary services: {e}")
+            raise
 
     async def initialize_symbols(self) -> List[str]:
         """Initialize symbols using dynamic symbol manager"""
@@ -566,6 +595,13 @@ class BinanceAdvancedMonitor:
 
         except Exception as e:
             self.stats['errors'] += 1
+            # 使用重试管理器记录错误统计
+            from ..core.retry_manager import error_handler
+            error_handler.handle_error(e, {
+                "callback_type": "trade",
+                "symbol": getattr(trade, 'symbol', 'unknown'),
+                "timestamp": receipt_time
+            })
             logger.error(f"Trade callback error: {e}")
 
     async def candle_callback(self, candle, receipt_time):
@@ -636,33 +672,24 @@ class BinanceAdvancedMonitor:
     async def cleanup_old_funding_data(self):
         """Clean up old funding data automatically"""
         try:
-            import asyncio
-            import psycopg2
-
-            # Database connection
-            conn = psycopg2.connect(
-                host=postgres_cfg['host'],
-                user=postgres_cfg['user'],
-                password=postgres_cfg['pw'],
-                database=postgres_cfg['db']
+            client = clickhouse_connect.get_client(
+                host=clickhouse_cfg['host'],
+                port=clickhouse_cfg['port'],
+                user=clickhouse_cfg['user'],
+                password=clickhouse_cfg['password'],
+                database=clickhouse_cfg['database']
             )
 
-            cursor = conn.cursor()
+            # 检查TTL清理状态（ClickHouse会自动清理）
+            result = client.query(f"SELECT count() FROM funding WHERE timestamp < now() - INTERVAL {self.funding_retention_days} DAY")
+            old_count = result.result_rows[0][0] if result.result_rows else 0
 
-            # Delete data older than cleanup_days
-            cursor.execute(f"""
-                DELETE FROM funding
-                WHERE timestamp < NOW() - INTERVAL '{self.cleanup_days} days'
-            """)
+            if old_count == 0:
+                logger.info(f"✅ TTL cleanup working: No funding data older than {self.funding_retention_days} days found")
+            else:
+                logger.info(f"⏳ TTL cleanup pending: {old_count:,} funding records older than {self.funding_retention_days} days (will be auto-cleaned)")
 
-            deleted_count = cursor.rowcount
-            conn.commit()
-
-            if deleted_count > 0:
-                logger.info(f"🗑️ Auto cleanup: Removed {deleted_count:,} old funding records (>{self.cleanup_days} days)")
-
-            cursor.close()
-            conn.close()
+            client.close()
 
         except Exception as e:
             logger.error(f"Auto cleanup failed: {e}")
@@ -670,32 +697,24 @@ class BinanceAdvancedMonitor:
     def cleanup_old_funding_data_sync(self):
         """Clean up old funding data synchronously"""
         try:
-            import psycopg2
-
-            # Database connection
-            conn = psycopg2.connect(
-                host=postgres_cfg['host'],
-                user=postgres_cfg['user'],
-                password=postgres_cfg['pw'],
-                database=postgres_cfg['db']
+            client = clickhouse_connect.get_client(
+                host=clickhouse_cfg['host'],
+                port=clickhouse_cfg['port'],
+                user=clickhouse_cfg['user'],
+                password=clickhouse_cfg['password'],
+                database=clickhouse_cfg['database']
             )
 
-            cursor = conn.cursor()
+            # 检查TTL清理状态（ClickHouse会自动清理）
+            result = client.query(f"SELECT count() FROM funding WHERE timestamp < now() - INTERVAL {self.funding_retention_days} DAY")
+            old_count = result.result_rows[0][0] if result.result_rows else 0
 
-            # Delete data older than cleanup_days
-            cursor.execute(f"""
-                DELETE FROM funding
-                WHERE timestamp < NOW() - INTERVAL '{self.cleanup_days} days'
-            """)
+            if old_count == 0:
+                logger.info(f"✅ Initial TTL check: No funding data older than {self.funding_retention_days} days found")
+            else:
+                logger.info(f"⏳ Initial TTL check: {old_count:,} funding records older than {self.funding_retention_days} days (will be auto-cleaned)")
 
-            deleted_count = cursor.rowcount
-            conn.commit()
-
-            if deleted_count > 0:
-                logger.info(f"🗑️ Initial cleanup: Removed {deleted_count:,} old funding records (>{self.cleanup_days} days)")
-
-            cursor.close()
-            conn.close()
+            client.close()
 
         except Exception as e:
             logger.error(f"Initial cleanup failed: {e}")
@@ -703,6 +722,9 @@ class BinanceAdvancedMonitor:
     async def setup_monitoring(self):
         """Setup monitoring configuration"""
         logger.info("🔧 Configuring advanced monitoring system...")
+
+        # Initialize auxiliary services first
+        await self.initialize_auxiliary_services()
 
         # Initialize symbols using dynamic symbol manager
         self.symbols = await self.initialize_symbols()
@@ -724,7 +746,7 @@ class BinanceAdvancedMonitor:
 
         # Create feeds for each interval
         for interval in INTERVALS:
-            table_name = f'candles_{interval}'
+            table_name = 'candles'  # 统一使用candles表
             logger.info(f"Adding {interval} candle monitoring: {len(self.symbols)} contracts")
 
             self.feed_handler.add_feed(
@@ -733,7 +755,7 @@ class BinanceAdvancedMonitor:
                     channels=[CANDLES],
                     callbacks={
                         CANDLES: [
-                            CandlesPostgres(table=table_name, **postgres_cfg),
+                            CandlesClickHouse(table=table_name, **clickhouse_cfg),
                             self.candle_callback
                         ]
                     },
@@ -743,7 +765,7 @@ class BinanceAdvancedMonitor:
 
         # Trade data monitoring - smart filtering (large trades + price changes + time intervals)
         logger.info(f"Adding smart trade data monitoring: {len(self.symbols)} contracts (intelligent filtering)")
-        self.smart_trade_backend = SmartTradePostgres(**postgres_cfg)
+        self.smart_trade_backend = SmartTradeClickHouse(**clickhouse_cfg)
         self.feed_handler.add_feed(
             BinanceFutures(
                 symbols=self.symbols,
@@ -765,7 +787,7 @@ class BinanceAdvancedMonitor:
                 channels=[FUNDING],
                 callbacks={
                     FUNDING: [
-                        RateLimitedFundingPostgres(**postgres_cfg),
+                        RateLimitedFundingClickHouse(**clickhouse_cfg),
                         self.funding_callback
                     ]
                 }
@@ -780,7 +802,7 @@ class BinanceAdvancedMonitor:
                 channels=[LIQUIDATIONS],
                 callbacks={
                     LIQUIDATIONS: [
-                        LiquidationsPostgres(**postgres_cfg),
+                        LiquidationsClickHouse(**clickhouse_cfg),
                         self.liquidation_callback
                     ]
                 }
@@ -795,7 +817,7 @@ class BinanceAdvancedMonitor:
                 channels=[OPEN_INTEREST],
                 callbacks={
                     OPEN_INTEREST: [
-                        OpenInterestPostgres(**postgres_cfg),
+                        OpenInterestClickHouse(**clickhouse_cfg),
                         self.open_interest_callback
                     ]
                 }
@@ -819,6 +841,31 @@ class BinanceAdvancedMonitor:
         logger.info(f"Liquidations: {self.stats['liquidations_count']} records")
         logger.info(f"Open Interest: {self.stats['open_interest_count']} records")
         logger.info(f"Error count: {self.stats['errors']}")
+
+        # 打印重试管理器和错误处理器统计信息
+        try:
+            from ..core.retry_manager import error_handler
+            retry_stats = self.retry_manager.get_stats()
+            error_stats = error_handler.get_error_stats()
+
+            if retry_stats['retry_stats'] or error_stats['total_errors'] > 0:
+                logger.info("=" * 30)
+                logger.info("🔄 Error & Retry Statistics")
+                logger.info(f"Total errors handled: {error_stats['total_errors']}")
+                logger.info(f"Unique error types: {error_stats['unique_errors']}")
+
+                if retry_stats['retry_stats']:
+                    logger.info("📊 Retry statistics:")
+                    for func_name, stats in list(retry_stats['retry_stats'].items())[:3]:  # 显示前3个
+                        logger.info(f"  {func_name}: {stats['success_count']}/{stats['total_calls']} success, avg attempts: {stats['avg_attempts']:.1f}")
+
+                if error_stats['top_errors']:
+                    logger.info("🔝 Top errors:")
+                    for error_key, count in error_stats['top_errors'][:3]:  # 显示前3个
+                        logger.info(f"  {error_key}: {count} times")
+
+        except Exception as e:
+            logger.warning(f"Failed to get retry/error stats: {e}")
 
         if self.stats['last_trade_time']:
             logger.info(f"Last trade: {self.stats['last_trade_time'].strftime('%H:%M:%S')}")
@@ -870,9 +917,18 @@ class BinanceAdvancedMonitor:
             # Start symbol monitoring in background
             symbol_monitor_task = asyncio.create_task(self.symbol_manager.start_monitoring())
 
-            # Keep running until stopped (don't call feed_handler.run() here)
+            # Start FeedHandler in background task
+            feed_task = asyncio.create_task(self._run_feedhandler())
+
+            # Keep running until stopped
             while self.is_running:
                 await asyncio.sleep(1)
+
+            # Stop tasks
+            if not symbol_monitor_task.done():
+                symbol_monitor_task.cancel()
+            if not feed_task.done():
+                feed_task.cancel()
 
         except KeyboardInterrupt:
             logger.info("User manual stop")
@@ -886,8 +942,28 @@ class BinanceAdvancedMonitor:
             if 'symbol_monitor_task' in locals():
                 symbol_monitor_task.cancel()
             logger.info("🔄 Performing final cleanup...")
+
+            # Stop auxiliary services
+            await self._cleanup_auxiliary_services()
+
             self.print_stats()
             logger.info("✅ Monitor system stopped safely")
+
+    async def _cleanup_auxiliary_services(self):
+        """清理辅助服务"""
+        try:
+            # Stop health monitor
+            if self.health_monitor:
+                self.health_monitor.stop()
+                logger.info("✅ Health monitor stopped")
+
+            # Stop temp data manager
+            if self.temp_data_manager:
+                await self.temp_data_manager.stop()
+                logger.info("✅ Temp data manager stopped")
+
+        except Exception as e:
+            logger.error(f"Error during auxiliary services cleanup: {e}")
 
     def _sync_initialize(self):
         """Synchronous initialization for FeedHandler"""
@@ -895,15 +971,19 @@ class BinanceAdvancedMonitor:
         logger.info("=" * 60)
         logger.info("🔧 Configuring advanced monitoring system...")
 
-        # Symbol manager is already initialized in __init__
-        # Just get the symbols synchronously
-        logger.info("🔧 Initializing symbol management...")
-
-        # Get symbols synchronously
+        # Initialize auxiliary services and symbols synchronously
         import asyncio
         loop = asyncio.new_event_loop()
-        self.symbols = loop.run_until_complete(self.initialize_symbols())
-        loop.close()
+
+        try:
+            # Initialize auxiliary services
+            loop.run_until_complete(self.initialize_auxiliary_services())
+
+            # Initialize symbols
+            logger.info("🔧 Initializing symbol management...")
+            self.symbols = loop.run_until_complete(self.initialize_symbols())
+        finally:
+            loop.close()
 
         logger.info(f"🎯 Will monitor {len(self.symbols)} contracts")
         logger.info(f"📋 Symbol selection mode: {self.symbol_manager.mode}")
@@ -942,7 +1022,7 @@ class BinanceAdvancedMonitor:
 
         # Create feeds for each interval
         for interval in INTERVALS:
-            table_name = f'candles_{interval}'
+            table_name = 'candles'  # 统一使用candles表
             logger.info(f"Adding {interval} candle monitoring: {len(self.symbols)} contracts")
 
             self.feed_handler.add_feed(
@@ -951,7 +1031,7 @@ class BinanceAdvancedMonitor:
                     channels=[CANDLES],
                     callbacks={
                         CANDLES: [
-                            CandlesPostgres(table=table_name, **postgres_cfg),
+                            CandlesClickHouse(table=table_name, **clickhouse_cfg),
                             self.candle_callback
                         ]
                     },
@@ -961,7 +1041,7 @@ class BinanceAdvancedMonitor:
 
         # Trade data monitoring - smart filtering
         logger.info(f"Adding smart trade data monitoring: {len(self.symbols)} contracts (intelligent filtering)")
-        self.smart_trade_backend = SmartTradePostgres(**postgres_cfg)
+        self.smart_trade_backend = SmartTradeClickHouse(**clickhouse_cfg)
         self.feed_handler.add_feed(
             BinanceFutures(
                 symbols=self.symbols,
@@ -983,7 +1063,7 @@ class BinanceAdvancedMonitor:
                 channels=[FUNDING],
                 callbacks={
                     FUNDING: [
-                        RateLimitedFundingPostgres(**postgres_cfg),
+                        RateLimitedFundingClickHouse(**clickhouse_cfg),
                         self.funding_callback
                     ]
                 }
@@ -998,7 +1078,7 @@ class BinanceAdvancedMonitor:
                 channels=[LIQUIDATIONS],
                 callbacks={
                     LIQUIDATIONS: [
-                        LiquidationsPostgres(**postgres_cfg),
+                        LiquidationsClickHouse(**clickhouse_cfg),
                         self.liquidation_callback
                     ]
                 }
@@ -1013,7 +1093,7 @@ class BinanceAdvancedMonitor:
                 channels=[OPEN_INTEREST],
                 callbacks={
                     OPEN_INTEREST: [
-                        OpenInterestPostgres(**postgres_cfg),
+                        OpenInterestClickHouse(**clickhouse_cfg),
                         self.open_interest_callback
                     ]
                 }
@@ -1043,8 +1123,140 @@ class BinanceAdvancedMonitor:
         finally:
             self.is_running = False
             logger.info("🔄 Performing final cleanup...")
+
+            # Cleanup auxiliary services synchronously
+            self._sync_cleanup_auxiliary_services()
+
             self.print_stats()
             logger.info("✅ Monitor system stopped safely")
+
+    def _sync_cleanup_auxiliary_services(self):
+        """同步清理辅助服务"""
+        try:
+            # Stop health monitor
+            if self.health_monitor:
+                self.health_monitor.stop()
+                logger.info("✅ Health monitor stopped")
+
+            # Stop temp data manager (run async in sync context)
+            if self.temp_data_manager:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(self.temp_data_manager.stop())
+                    logger.info("✅ Temp data manager stopped")
+                finally:
+                    loop.close()
+
+        except Exception as e:
+            logger.error(f"Error during auxiliary services cleanup: {e}")
+
+    async def _run_feedhandler(self):
+        """在单独的线程中运行FeedHandler"""
+        try:
+            import asyncio
+            import threading
+
+            def run_feed():
+                """在单独线程中运行FeedHandler的事件循环"""
+                try:
+                    # FeedHandler需要自己的事件循环
+                    self.feed_handler.run()
+                except Exception as e:
+                    logger.error(f"FeedHandler error: {e}")
+
+            # 在线程中运行FeedHandler
+            feed_thread = threading.Thread(target=run_feed, daemon=True)
+            feed_thread.start()
+
+            logger.info("✅ FeedHandler started in background thread")
+
+            # 等待直到停止
+            while self.is_running and feed_thread.is_alive():
+                await asyncio.sleep(1)
+
+            # 停止FeedHandler
+            if self.feed_handler:
+                self.feed_handler.stop()
+
+            logger.info("✅ FeedHandler stopped")
+
+        except Exception as e:
+            logger.error(f"Error running FeedHandler: {e}")
+
+async def start_data_integrity_service():
+    """启动数据完整性检查服务"""
+    try:
+        from ..services.data_integrity import DataIntegrityChecker
+        from .symbol_manager import symbol_manager
+
+        logger.info("🔍 Starting data integrity check service...")
+
+        # 获取监控的交易对列表
+        symbols = await symbol_manager.get_symbols()
+
+        if not symbols:
+            logger.warning("No active symbols found for integrity check")
+            return
+
+        # 创建数据完整性检查器
+        integrity_checker = DataIntegrityChecker()
+
+        # 运行完整性检查（仅检查最近3天的数据）
+        results = await integrity_checker.run_integrity_check(
+            symbols=symbols[:10],  # 限制检查前10个最活跃的合约
+            check_candles=config.get('data_integrity.check_types.candles', True),
+            check_trades=config.get('data_integrity.check_types.trades', False),
+            check_funding=config.get('data_integrity.check_types.funding', True),
+            lookback_days=config.get('data_integrity.lookback_days', 3)  # 从配置文件读取
+        )
+
+        # 统计检查结果
+        total_gaps = 0
+        for symbol, symbol_result in results.items():
+            if 'error' not in symbol_result:
+                candle_gaps = sum(symbol_result.get('candle_gaps', {}).values())
+                funding_gaps = symbol_result.get('funding_gaps', 0)
+                total_gaps += candle_gaps + funding_gaps
+
+        logger.info(f"✅ Data integrity check completed: {total_gaps} gaps found across {len(results)} symbols")
+
+    except Exception as e:
+        logger.error(f"Data integrity check failed: {e}")
+
+async def start_backfill_service():
+    """启动历史数据回填服务（如果配置启用）"""
+    try:
+        # 检查配置是否启用历史数据回填
+        backfill_enabled = config.get('data_backfill.enabled', False)
+
+        if not backfill_enabled:
+            logger.info("📋 Historical data backfill disabled in configuration")
+            return
+
+        from ..services.data_backfill import DataBackfillService
+
+        logger.info("🔄 Starting historical data backfill service...")
+
+        # 从配置文件获取回填参数
+        max_concurrent = config.get('data_backfill.max_concurrent_tasks', 2)
+        default_lookback = config.get('data_backfill.default_lookback_days', 7)
+
+        backfill_service = DataBackfillService(max_concurrent_tasks=max_concurrent)
+        # 运行一次数据回填检查
+        symbols = await symbol_manager.get_symbols()
+        results = backfill_service.run_backfill_tasks(symbols[:5], lookback_days=default_lookback)
+
+        if results and results.get('total_tasks', 0) > 0:
+            successful = results.get('successful', 0)
+            total_tasks = results.get('total_tasks', 0)
+            total_records = results.get('records_added', 0)
+            logger.info(f"✅ Backfill completed: {successful}/{total_tasks} tasks successful, {total_records} records added")
+        else:
+            logger.info("📋 No data gaps detected for backfill")
+
+    except Exception as e:
+        logger.error(f"Historical data backfill failed: {e}")
 
 def main():
     """Main function"""
@@ -1054,6 +1266,28 @@ def main():
     monitor = BinanceAdvancedMonitor()
 
     try:
+        # 检查是否启用数据完整性和回填功能
+        # 重新启用修复后的服务
+        integrity_enabled = config.get('data_integrity.enabled', True)
+        backfill_enabled = config.get('data_backfill.enabled', False)
+
+        if integrity_enabled or backfill_enabled:
+            logger.info("🔍 Running data integrity and backfill checks...")
+
+            # 创建新的事件循环来运行初始化任务
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                if integrity_enabled:
+                    loop.run_until_complete(start_data_integrity_service())
+
+                if backfill_enabled:
+                    loop.run_until_complete(start_backfill_service())
+            finally:
+                loop.close()
+
         # Run monitoring system
         monitor.run()
     except Exception as e:

@@ -7,7 +7,7 @@ import asyncio
 import json
 import logging
 import psutil
-import psycopg2
+import clickhouse_connect
 import threading
 import time
 from datetime import datetime, timedelta
@@ -28,13 +28,13 @@ class HealthMonitor:
         self.health_port = config.get('monitoring.health_check_port', 8080)
         self.stats_interval = config.get('monitoring.stats_interval', 300)
 
-        # 数据库配置
+        # ClickHouse数据库配置
         self.db_config = {
-            'host': config.get('database.host'),
-            'port': config.get('database.port', 5432),
-            'user': config.get('database.user'),
-            'password': config.get('database.password'),
-            'database': config.get('database.database')
+            'host': config.get('clickhouse.host', 'localhost'),
+            'port': config.get('clickhouse.port', 8123),
+            'user': config.get('clickhouse.user', 'default'),
+            'password': config.get('clickhouse.password', 'password123'),
+            'database': config.get('clickhouse.database', 'cryptofeed')
         }
 
         # 系统状态
@@ -186,11 +186,9 @@ class HealthMonitor:
     def _check_database_health(self) -> bool:
         """检查数据库健康状态"""
         try:
-            conn = psycopg2.connect(**self.db_config)
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1.txt")
-            cursor.fetchone()
-            conn.close()
+            client = clickhouse_connect.get_client(**self.db_config)
+            result = client.query("SELECT 1")
+            client.close()
             return True
         except Exception as e:
             logger.warning(f"数据库健康检查失败: {e}")
@@ -243,17 +241,16 @@ class HealthMonitor:
     def _check_recent_data(self) -> bool:
         """检查是否有最近的数据"""
         try:
-            conn = psycopg2.connect(**self.db_config)
-            cursor = conn.cursor()
+            client = clickhouse_connect.get_client(**self.db_config)
 
             # 检查最近5分钟是否有交易数据
-            cursor.execute("""
+            result = client.query("""
                 SELECT COUNT(*) FROM trades
-                WHERE timestamp > NOW() - INTERVAL '5 minutes'
+                WHERE timestamp > now() - INTERVAL 5 MINUTE
             """)
-            recent_trades = cursor.fetchone()[0]
+            recent_trades = result.result_rows[0][0] if result.result_rows else 0
 
-            conn.close()
+            client.close()
             return recent_trades > 0
 
         except Exception as e:
@@ -314,30 +311,32 @@ class HealthMonitor:
     def _get_database_metrics(self) -> Optional[Dict[str, Any]]:
         """获取数据库指标"""
         try:
-            conn = psycopg2.connect(**self.db_config)
-            cursor = conn.cursor()
+            client = clickhouse_connect.get_client(**self.db_config)
 
-            # 连接数
-            cursor.execute("SELECT count(*) FROM pg_stat_activity")
-            connection_count = cursor.fetchone()[0]
+            # ClickHouse 连接数（简化版本，因为 ClickHouse 不同于 PostgreSQL）
+            connection_result = client.query("SELECT count() FROM system.processes")
+            connection_count = connection_result.result_rows[0][0] if connection_result.result_rows else 0
 
-            # 数据库大小
-            cursor.execute(f"""
-                SELECT pg_size_pretty(pg_database_size('{self.db_config["database"]}'))
+            # 数据库大小（ClickHouse 通过 system.parts 表获取）
+            size_result = client.query(f"""
+                SELECT formatReadableSize(sum(bytes_on_disk))
+                FROM system.parts
+                WHERE database = '{self.db_config.get("database", "cryptofeed")}'
+                AND active = 1
             """)
-            db_size = cursor.fetchone()[0]
+            db_size = size_result.result_rows[0][0] if size_result.result_rows else "0B"
 
             # 各表记录数
             table_counts = {}
-            tables = ['trades', 'funding', 'ticker', 'candles_1m', 'candles_5m', 'candles_30m', 'candles_4h', 'candles_1d']
+            tables = ['trades', 'funding', 'candles_1m', 'candles_5m', 'candles_30m', 'candles_4h', 'candles_1d', 'liquidations', 'open_interest']
             for table in tables:
                 try:
-                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
-                    table_counts[table] = cursor.fetchone()[0]
+                    result = client.query(f"SELECT COUNT(*) FROM {table}")
+                    table_counts[table] = result.result_rows[0][0] if result.result_rows else 0
                 except:
                     table_counts[table] = 0
 
-            conn.close()
+            client.close()
 
             return {
                 'connection_count': connection_count,

@@ -34,7 +34,7 @@ class Config:
             'collection': {
                 'data_types': [
                     'trades', 'ticker', 'funding', 'l2_book',
-                    'candles_1m', 'candles_5m', 'candles_30m', 'candles_4h', 'candles_1d',
+                    'candles', 'candles', 'candles', 'candles', 'candles',  # 统一使用candles表
                     'liquidations', 'open_interest', 'index'
                 ]
             },

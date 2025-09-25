@@ -12,8 +12,8 @@ from cryptofeed.defines import (
     TRADES, TICKER, FUNDING, L2_BOOK, LIQUIDATIONS, OPEN_INTEREST, INDEX, CANDLES
 )
 from cryptofeed.exchanges import BinanceFutures
-from cryptofeed.backends.postgres import (
-    TradePostgres, FundingPostgres, CandlesPostgres, TickerPostgres
+from cryptofeed.backends.clickhouse import (
+    TradeClickHouse, FundingClickHouse, CandlesClickHouse, TickerClickHouse
 )
 
 from ..config import config
@@ -53,12 +53,13 @@ class DataCollectionService:
 
                 logger.info(f"连接{i}: 处理 {len(connection_symbols)} 个合约")
 
-                # 创建PostgreSQL配置
-                postgres_cfg = {
-                    'host': config.get('database.host', '127.0.0.1'),
-                    'user': config.get('database.user', 'postgres'),
-                    'pw': config.get('database.password', 'password'),
-                    'db': config.get('database.database', 'cryptofeed'),
+                # 创建ClickHouse配置
+                clickhouse_cfg = {
+                    'host': config.get('clickhouse.host', 'localhost'),
+                    'port': config.get('clickhouse.port', 8123),
+                    'user': config.get('clickhouse.user', 'default'),
+                    'password': config.get('clickhouse.password', 'password123'),
+                    'database': config.get('clickhouse.database', 'cryptofeed'),
                 }
 
                 # 创建FeedHandler
@@ -70,7 +71,7 @@ class DataCollectionService:
                         symbols=connection_symbols,
                         channels=[TRADES],
                         callbacks={
-                            TRADES: [TradePostgres(**postgres_cfg)]
+                            TRADES: [TradeClickHouse(**clickhouse_cfg)]
                         }
                     )
                 )
@@ -81,7 +82,7 @@ class DataCollectionService:
                         symbols=connection_symbols,
                         channels=[FUNDING],
                         callbacks={
-                            FUNDING: [FundingPostgres(**postgres_cfg)]
+                            FUNDING: [FundingClickHouse(**clickhouse_cfg)]
                         }
                     )
                 )
@@ -89,13 +90,13 @@ class DataCollectionService:
                 # 添加K线监控 - 分别为每个时间周期创建
                 intervals = ['1m', '5m', '30m', '4h', '1d']
                 for interval in intervals:
-                    table_name = f'candles_{interval}'
+                    table_name = 'candles'  # 统一使用candles表
                     fh.add_feed(
                         BinanceFutures(
                             symbols=connection_symbols,
                             channels=[CANDLES],
                             callbacks={
-                                CANDLES: [CandlesPostgres(table=table_name, **postgres_cfg)]
+                                CANDLES: [CandlesClickHouse(table=table_name, **clickhouse_cfg)]
                             },
                             candle_interval=interval
                         )

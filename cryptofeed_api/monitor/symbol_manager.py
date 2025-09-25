@@ -17,7 +17,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from cryptofeed.exchanges import BinanceFutures
-from src.cryptofeed_monitor.config import config
+from .config import config
 
 logger = logging.getLogger(__name__)
 
