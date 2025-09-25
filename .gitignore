@@ -174,3 +174,4 @@ notebooks/
 # Monitoring output
 output/
 reports/
+.github/
