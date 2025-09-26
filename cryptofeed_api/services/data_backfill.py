@@ -62,7 +62,8 @@ class DataBackfillService:
 
     def detect_data_gaps(self, symbols: List[str], lookback_days: int = None) -> List[BackfillTask]:
         """
-        检测数据缺口，基于ClickHouse数据
+        精确检测数据缺口，基于ClickHouse数据 - 改进版
+        只检测实际缺失的时间段，避免重复下载
 
         Args:
             symbols: 要检查的交易对列表
@@ -81,52 +82,101 @@ class DataBackfillService:
         start_time = end_time - timedelta(days=lookback_days)
 
         intervals = ['1m', '5m', '30m', '4h', '1d']
+        interval_minutes = {'1m': 1, '5m': 5, '30m': 30, '4h': 240, '1d': 1440}
 
         try:
             for symbol in symbols:
                 for interval in intervals:
-                    # 检查该时间段是否有数据缺口
-                    sql = """
-                        SELECT
-                            MIN(timestamp) as first_ts,
-                            MAX(timestamp) as last_ts,
-                            COUNT(*) as total_count
-                        FROM candles
-                        WHERE symbol = {symbol:String}
-                          AND interval = {interval:String}
-                          AND timestamp >= {start_time:DateTime}
-                          AND timestamp <= {end_time:DateTime}
-                    """
+                    gaps = self._find_precise_gaps(
+                        ch_client, symbol, interval, start_time, end_time,
+                        interval_minutes[interval]
+                    )
 
-                    result = ch_client.query(sql, {
-                        'symbol': symbol,
-                        'interval': interval,
-                        'start_time': start_time,
-                        'end_time': end_time
-                    })
+                    for gap_start, gap_end in gaps:
+                        task = BackfillTask(
+                            gap_log_id=0,
+                            symbol=symbol,
+                            data_type='candles',
+                            interval=interval,
+                            start_time=gap_start,
+                            end_time=gap_end
+                        )
+                        tasks.append(task)
+                        logger.info(f"Detected precise gap for {symbol} {interval}: {gap_start} to {gap_end}")
 
-                    if result and result.result_rows:
-                        row = result.result_rows[0]
-                        first_ts, last_ts, count = row
-
-                        # 如果没有数据或数据不完整，创建回填任务
-                        if count == 0 or (first_ts and first_ts > start_time):
-                            task = BackfillTask(
-                                gap_log_id=0,  # 动态检测，无数据库记录
-                                symbol=symbol,
-                                data_type='candles',
-                                interval=interval,
-                                start_time=start_time,
-                                end_time=end_time
-                            )
-                            tasks.append(task)
-                            logger.info(f"Detected gap for {symbol} {interval}: {start_time} to {end_time}")
-
-            logger.info(f"Detected {len(tasks)} data gaps")
+            logger.info(f"Detected {len(tasks)} precise data gaps")
             return tasks
 
         finally:
             ch_client.close()
+
+    def _find_precise_gaps(self, client, symbol: str, interval: str,
+                          start_time: datetime, end_time: datetime,
+                          interval_min: int) -> List[Tuple[datetime, datetime]]:
+        """
+        精确查找数据缺口
+        """
+        # 获取现有数据的时间点
+        sql = """
+            SELECT timestamp
+            FROM candles
+            WHERE symbol = {symbol:String}
+              AND interval = {interval:String}
+              AND timestamp >= {start_time:DateTime}
+              AND timestamp <= {end_time:DateTime}
+            ORDER BY timestamp
+        """
+
+        result = client.query(sql, {
+            'symbol': symbol,
+            'interval': interval,
+            'start_time': start_time,
+            'end_time': end_time
+        })
+
+        if not result.result_rows:
+            # 完全没有数据
+            return [(start_time, end_time)]
+
+        existing_timestamps = [row[0] for row in result.result_rows]
+        gaps = []
+
+        # 生成期望的时间序列
+        expected_timestamps = []
+        current = start_time
+        while current <= end_time:
+            expected_timestamps.append(current)
+            current += timedelta(minutes=interval_min)
+
+        # 找出缺失的时间段
+        existing_set = set(existing_timestamps)
+        missing_timestamps = [ts for ts in expected_timestamps if ts not in existing_set]
+
+        if not missing_timestamps:
+            return []  # 没有缺口
+
+        # 将连续的缺失时间合并为缺口范围
+        gaps = []
+        gap_start = missing_timestamps[0]
+        gap_end = missing_timestamps[0]
+
+        for i in range(1, len(missing_timestamps)):
+            current_ts = missing_timestamps[i]
+            expected_next = gap_end + timedelta(minutes=interval_min)
+
+            if current_ts == expected_next:
+                # 连续缺失，扩展当前缺口
+                gap_end = current_ts
+            else:
+                # 新的缺口开始
+                gaps.append((gap_start, gap_end + timedelta(minutes=interval_min)))
+                gap_start = current_ts
+                gap_end = current_ts
+
+        # 添加最后一个缺口
+        gaps.append((gap_start, gap_end + timedelta(minutes=interval_min)))
+
+        return gaps
 
     def backfill_candles(
         self,
@@ -155,115 +205,105 @@ class DataBackfillService:
             ch_client = clickhouse_connect.get_client(**self.ch_config)
 
             try:
-                # 先删除整个时间范围的数据（避免重复）
-                ch_client.command(f"""
-                    DELETE FROM candles
-                    WHERE symbol = '{symbol}' AND interval = '{interval}'
-                    AND timestamp >= '{start_time}' AND timestamp <= '{end_time}'
-                """)
+                # 新逻辑：不删除现有数据，只插入缺失的数据
+                # 这样可以避免重复下载和数据丢失的风险
+                logger.info(f"开始精确回填 {symbol} {interval}，时间范围: {start_time} 到 {end_time}")
 
-                # 计算需要的批次数（每批1500条，5分钟间隔约5.2天）
-                total_minutes = int((end_time - start_time).total_seconds() / 60)
-                interval_minutes = {'1m': 1, '5m': 5, '30m': 30, '4h': 240, '1d': 1440}
-                interval_min = interval_minutes.get(interval, 5)
+                # 精确获取缺失的数据 - 只下载需要的时间段
+                start_ms = int(start_time.timestamp() * 1000)
+                end_ms = int(end_time.timestamp() * 1000)
 
-                estimated_records = total_minutes // interval_min
-                batch_size = 1500
-                num_batches = (estimated_records + batch_size - 1) // batch_size
+                # 调用Binance API获取指定时间段的数据
+                url = "https://fapi.binance.com/fapi/v1/klines"
+                params = {
+                    'symbol': binance_symbol,
+                    'interval': binance_interval,
+                    'startTime': start_ms,
+                    'endTime': end_ms,
+                    'limit': 1500
+                }
 
-                logger.info(f"准备分批获取 {symbol} {interval} 数据：预计 {estimated_records} 条记录，{num_batches} 个批次")
+                logger.info(f"精确获取 {symbol} {interval}: {start_time.strftime('%Y-%m-%d %H:%M')} 到 {end_time.strftime('%Y-%m-%d %H:%M')}")
 
-                all_insert_data = []
-                current_start = start_time
-                batch_num = 0
+                response = requests.get(url, params=params, timeout=30)
 
-                while current_start < end_time and batch_num < num_batches:
-                    batch_num += 1
+                if response.status_code == 200:
+                    klines_data = response.json()
+                    all_insert_data = []
 
-                    # 计算当前批次的结束时间（确保不超过总结束时间）
-                    batch_end = min(
-                        current_start + timedelta(days=5),  # 每批约5天数据
-                        end_time
-                    )
+                    if klines_data:
+                        # 获取现有数据的时间戳以避免重复
+                        existing_sql = """
+                            SELECT timestamp
+                            FROM candles
+                            WHERE symbol = {symbol:String}
+                              AND interval = {interval:String}
+                              AND timestamp >= {start_time:DateTime}
+                              AND timestamp <= {end_time:DateTime}
+                        """
 
-                    start_ms = int(current_start.timestamp() * 1000)
-                    end_ms = int(batch_end.timestamp() * 1000)
+                        existing_result = ch_client.query(existing_sql, {
+                            'symbol': symbol,
+                            'interval': interval,
+                            'start_time': start_time,
+                            'end_time': end_time
+                        })
 
-                    # 调用Binance API
-                    url = "https://fapi.binance.com/fapi/v1/klines"
-                    params = {
-                        'symbol': binance_symbol,
-                        'interval': binance_interval,
-                        'startTime': start_ms,
-                        'endTime': end_ms,
-                        'limit': batch_size
-                    }
+                        existing_timestamps = set(row[0] for row in existing_result.result_rows)
 
-                    logger.info(f"批次 {batch_num}/{num_batches}: 获取 {current_start.strftime('%Y-%m-%d %H:%M')} 到 {batch_end.strftime('%Y-%m-%d %H:%M')}")
+                        # 只处理不存在的数据
+                        for kline in klines_data:
+                            open_time = datetime.fromtimestamp(kline[0] / 1000)
 
-                    response = requests.get(url, params=params, timeout=30)
+                            # 跳过已存在的数据点
+                            if open_time in existing_timestamps:
+                                continue
 
-                    if response.status_code == 200:
-                        klines_data = response.json()
+                            # 构造原始数据字典用于标准化
+                            raw_data = {
+                                'timestamp': open_time,
+                                'exchange': 'binance',  # REST API原始名称
+                                'symbol': symbol,
+                                'interval': interval,
+                                'open': float(kline[1]),
+                                'high': float(kline[2]),
+                                'low': float(kline[3]),
+                                'close': float(kline[4]),
+                                'volume': float(kline[5])
+                            }
 
-                        if klines_data:
-                            # 准备ClickHouse插入数据，匹配实际表结构：
-                            # timestamp, exchange, symbol, interval, open, high, low, close, volume
-                            for kline in klines_data:
-                                open_time = datetime.fromtimestamp(kline[0] / 1000)
+                            # 数据标准化处理
+                            normalized_data = normalize_data(raw_data, 'candle')
 
-                                # 构造原始数据字典用于标准化
-                                raw_data = {
-                                    'timestamp': open_time,
-                                    'exchange': 'binance',  # REST API原始名称
-                                    'symbol': symbol,
-                                    'interval': interval,
-                                    'open': float(kline[1]),
-                                    'high': float(kline[2]),
-                                    'low': float(kline[3]),
-                                    'close': float(kline[4]),
-                                    'volume': float(kline[5])
-                                }
+                            all_insert_data.append([
+                                normalized_data['timestamp'],      # timestamp
+                                normalized_data['exchange'],       # exchange (标准化后)
+                                normalized_data['symbol'],         # symbol
+                                normalized_data['interval'],       # interval
+                                normalized_data['open'],           # open
+                                normalized_data['high'],           # high
+                                normalized_data['low'],            # low
+                                normalized_data['close'],          # close
+                                normalized_data['volume']          # volume
+                            ])
 
-                                # 数据标准化处理
-                                normalized_data = normalize_data(raw_data, 'candle')
+                        logger.info(f"获取到 {len(klines_data)} 条数据，其中 {len(all_insert_data)} 条为新数据需要插入")
 
-                                all_insert_data.append([
-                                    normalized_data['timestamp'],      # timestamp
-                                    normalized_data['exchange'],       # exchange (标准化后)
-                                    normalized_data['symbol'],         # symbol
-                                    normalized_data['interval'],       # interval
-                                    normalized_data['open'],           # open
-                                    normalized_data['high'],           # high
-                                    normalized_data['low'],            # low
-                                    normalized_data['close'],          # close
-                                    normalized_data['volume']          # volume
-                                ])
-
-                            logger.info(f"批次 {batch_num} 获取到 {len(klines_data)} 条数据")
-
-                            # 更新下次开始时间为本批次最后一条数据的时间+1个间隔
-                            if klines_data:
-                                last_time = datetime.fromtimestamp(klines_data[-1][0] / 1000)
-                                current_start = last_time + timedelta(minutes=interval_min)
-                        else:
-                            logger.warning(f"批次 {batch_num} 返回空数据，跳过")
-                            current_start = batch_end
                     else:
-                        error_msg = f"批次 {batch_num} Binance API错误: {response.status_code} - {response.text}"
-                        logger.error(error_msg)
-                        return len(all_insert_data), error_msg
-
-                    # API限制：避免过快请求
-                    time.sleep(0.2)
+                        logger.warning(f"API返回空数据")
+                        return 0, None
+                else:
+                    error_msg = f"Binance API错误: {response.status_code} - {response.text}"
+                    logger.error(error_msg)
+                    return 0, error_msg
 
                 # 统一插入所有数据
                 if all_insert_data:
                     ch_client.insert('candles', all_insert_data)
-                    logger.info(f"✅ 成功回填 {len(all_insert_data)} 条 {symbol} {interval} 数据（{num_batches}个批次）")
+                    logger.info(f"✅ 成功精确回填 {len(all_insert_data)} 条 {symbol} {interval} 新数据")
                     return len(all_insert_data), None
                 else:
-                    logger.warning(f"没有获取到任何数据 {symbol} {interval}")
+                    logger.info(f"✓ {symbol} {interval} 无需回填，所有数据已存在")
                     return 0, None
 
             finally:
