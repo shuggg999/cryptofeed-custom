@@ -85,7 +85,21 @@ class Config:
         return result
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get configuration value, supports dot-separated key names"""
+        """Get configuration value, supports dot-separated key names and environment variables"""
+
+        # Check for environment variables first
+        env_key = key.replace('.', '_').upper()
+        if env_key in os.environ:
+            env_value = os.environ[env_key]
+            # Try to convert to appropriate type
+            if env_value.lower() in ('true', 'false'):
+                return env_value.lower() == 'true'
+            elif env_value.isdigit():
+                return int(env_value)
+            else:
+                return env_value
+
+        # Fall back to config file values
         keys = key.split('.')
         value = self.data
 

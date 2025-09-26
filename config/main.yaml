@@ -1,14 +1,8 @@
 # Cryptofeed Configuration
-database:
-  host: 127.0.0.1
-  port: 5432
-  user: postgres
-  password: password
-  database: cryptofeed
 
-# ClickHouse Configuration (新的时序数据库)
+# ClickHouse Configuration (时序数据库)
 clickhouse:
-  host: localhost
+  host: clickhouse  # Docker服务名，本地开发时使用localhost
   port: 8123
   user: default
   password: password123

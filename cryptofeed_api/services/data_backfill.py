@@ -48,13 +48,15 @@ class DataBackfillService:
         self.max_concurrent_tasks = max_concurrent_tasks
         self._active_tasks = 0
 
-        # ClickHouse连接配置
+        # ClickHouse连接配置 - 从环境变量和配置文件读取
+        import os
+        clickhouse_config = config.get('clickhouse', {})
         self.ch_config = {
-            'host': 'localhost',
-            'port': 8123,
-            'user': 'default',
-            'password': 'password123',
-            'database': 'cryptofeed'
+            'host': os.getenv('CLICKHOUSE_HOST', clickhouse_config.get('host', 'localhost')),
+            'port': int(os.getenv('CLICKHOUSE_PORT', clickhouse_config.get('port', 8123))),
+            'user': os.getenv('CLICKHOUSE_USER', clickhouse_config.get('user', 'default')),
+            'password': os.getenv('CLICKHOUSE_PASSWORD', clickhouse_config.get('password', 'password123')),
+            'database': os.getenv('CLICKHOUSE_DATABASE', clickhouse_config.get('database', 'cryptofeed'))
         }
 
     def detect_data_gaps(self, symbols: List[str], lookback_days: int = None) -> List[BackfillTask]:
@@ -204,19 +206,20 @@ class DataBackfillService:
                         klines_data = response.json()
 
                         if klines_data:
-                            # 准备ClickHouse插入数据
+                            # 准备ClickHouse插入数据，匹配实际表结构：
+                            # timestamp, exchange, symbol, interval, open, high, low, close, volume
                             for kline in klines_data:
                                 open_time = datetime.fromtimestamp(kline[0] / 1000)
                                 all_insert_data.append([
                                     open_time,                    # timestamp
+                                    'binance',                    # exchange
                                     symbol,                       # symbol
                                     interval,                     # interval
                                     float(kline[1]),              # open
                                     float(kline[2]),              # high
                                     float(kline[3]),              # low
                                     float(kline[4]),              # close
-                                    float(kline[5]),              # volume
-                                    open_time                     # receipt_timestamp
+                                    float(kline[5])               # volume
                                 ])
 
                             logger.info(f"批次 {batch_num} 获取到 {len(klines_data)} 条数据")

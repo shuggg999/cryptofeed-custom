@@ -1,0 +1,73 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <!-- 日志配置 -->
+    <logger>
+        <level>information</level>
+        <log>/var/log/clickhouse-server/clickhouse-server.log</log>
+        <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
+        <size>1000M</size>
+        <count>10</count>
+    </logger>
+
+    <!-- 内存设置将在profiles中配置 -->
+
+    <!-- 时序数据优化 -->
+    <merge_tree>
+        <max_suspicious_broken_parts>5</max_suspicious_broken_parts>
+        <parts_to_delay_insert>150</parts_to_delay_insert>
+        <parts_to_throw_insert>300</parts_to_throw_insert>
+        <max_parts_in_total>1000</max_parts_in_total>
+    </merge_tree>
+
+    <!-- 压缩设置（时序数据压缩率极高） -->
+    <compression>
+        <case>
+            <method>zstd</method>
+            <level>3</level>
+        </case>
+    </compression>
+
+    <!-- 网络设置 -->
+    <listen_host>0.0.0.0</listen_host>
+    <http_port>8123</http_port>
+    <tcp_port>9000</tcp_port>
+
+    <!-- 用户设置 -->
+    <users>
+        <default>
+            <password>password123</password>
+            <access_management>1</access_management>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+        </default>
+    </users>
+
+    <!-- 性能配置文件 -->
+    <profiles>
+        <default>
+            <max_memory_usage>4000000000</max_memory_usage>
+            <max_memory_usage_for_user>3000000000</max_memory_usage_for_user>
+            <use_uncompressed_cache>1</use_uncompressed_cache>
+            <load_balancing>random</load_balancing>
+            <max_execution_time>60</max_execution_time>
+            <max_concurrent_queries_for_user>10</max_concurrent_queries_for_user>
+        </default>
+    </profiles>
+
+    <!-- 配额 -->
+    <quotas>
+        <default>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>0</execution_time>
+            </interval>
+        </default>
+    </quotas>
+</clickhouse>

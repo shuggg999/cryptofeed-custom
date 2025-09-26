@@ -104,16 +104,22 @@ class RateLimitedFundingClickHouse:
             )
 
             # Prepare data for ClickHouse insertion (match table schema order)
-            # Schema: timestamp, symbol, rate, next_funding_time, receipt_timestamp
+            # Schema: timestamp, exchange, symbol, rate, mark_price, next_funding_time, predicted_rate, receipt_timestamp, date
             data = [
                 datetime.fromtimestamp(funding.timestamp) if funding.timestamp else datetime.now(),
+                funding.exchange,
                 funding.symbol,
                 float(funding.rate) if funding.rate else 0.0,
+                float(funding.mark_price) if hasattr(funding, 'mark_price') and funding.mark_price else 0.0,
                 datetime.fromtimestamp(funding.next_funding_time) if funding.next_funding_time else datetime.now(),
-                datetime.fromtimestamp(receipt_timestamp) if receipt_timestamp else datetime.now()
+                float(funding.predicted_rate) if hasattr(funding, 'predicted_rate') and funding.predicted_rate else 0.0,
+                datetime.fromtimestamp(receipt_timestamp) if receipt_timestamp else datetime.now(),
+                datetime.fromtimestamp(funding.timestamp).date() if funding.timestamp else datetime.now().date()
             ]
 
-            client.insert('funding', [data])
+            # Column names for funding table: timestamp, exchange, symbol, rate, mark_price, next_funding_time, predicted_rate, receipt_timestamp, date
+            columns = ['timestamp', 'exchange', 'symbol', 'rate', 'mark_price', 'next_funding_time', 'predicted_rate', 'receipt_timestamp', 'date']
+            client.insert('funding', [data], column_names=columns)
             client.close()
 
         except Exception as e:
@@ -250,18 +256,19 @@ class SmartTradeClickHouse:
             )
 
             # Prepare data for ClickHouse insertion (match table schema order)
-            # Schema: timestamp, symbol, side, amount, price, trade_id, receipt_timestamp
+            # Schema: timestamp, exchange, symbol, side, amount, price, id
             data = [
                 datetime.fromtimestamp(trade.timestamp) if trade.timestamp else datetime.now(),
+                trade.exchange,
                 trade.symbol,
                 trade.side,
                 float(trade.amount),
                 float(trade.price),
-                str(trade.id) if hasattr(trade, 'id') and trade.id else '',
-                datetime.fromtimestamp(receipt_timestamp) if receipt_timestamp else datetime.now()
+                str(trade.id) if hasattr(trade, 'id') and trade.id else ''
             ]
 
-            client.insert('trades', [data])
+            columns = ['timestamp', 'exchange', 'symbol', 'side', 'amount', 'price', 'id']
+            client.insert('trades', [data], column_names=columns)
             client.close()
 
         except Exception as e:

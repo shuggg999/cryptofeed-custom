@@ -1,40 +1,52 @@
-version: '3.8'
 
 services:
-  # TimescaleDB数据库服务
-  timescaledb:
-    image: timescale/timescaledb:latest-pg15
-    container_name: cryptofeed-timescaledb
+  # ClickHouse时序数据库服务
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    container_name: cryptofeed-clickhouse
     environment:
-      POSTGRES_DB: cryptofeed
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      CLICKHOUSE_DB: cryptofeed
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: password123
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ports:
-      - "5432:5432"
+      - "8123:8123"  # HTTP接口（查询、管理）
+      - "9000:9000"  # Native接口（高性能写入）
     volumes:
-      - timescale_data:/var/lib/postgresql/data
-      - ./sql/init:/docker-entrypoint-initdb.d
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      - ./docker/clickhouse/config:/etc/clickhouse-server/config.d
+      - ./docker/clickhouse/init:/docker-entrypoint-initdb.d
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     networks:
       - cryptofeed-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d cryptofeed"]
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # Cryptofeed监控服务
   cryptofeed-monitor:
     build: .
     container_name: cryptofeed-monitor
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
     environment:
-      # 数据库配置
-      DB_HOST: timescaledb
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: password
-      DB_NAME: cryptofeed
+      # ClickHouse数据库配置
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: password123
+      CLICKHOUSE_DATABASE: cryptofeed
 
       # 连接池配置
       STREAMS_PER_CONNECTION: 1000
@@ -45,12 +57,12 @@ services:
       HEALTH_CHECK_PORT: 8080
       METRICS_ENABLED: "true"
 
-      # WAL配置
-      WAL_ENABLED: "true"
-      WAL_SYNC_INTERVAL: 5
-
       # 日志级别
       LOG_LEVEL: INFO
+
+      # Python环境
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: 1
     ports:
       - "8080:8080"
     volumes:
@@ -60,11 +72,11 @@ services:
     networks:
       - cryptofeed-network
     depends_on:
-      timescaledb:
+      clickhouse:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -86,7 +98,7 @@ services:
       - cryptofeed-network
     restart: unless-stopped
     depends_on:
-      - timescaledb
+      - clickhouse
     profiles:
       - monitoring
 
@@ -108,7 +120,9 @@ services:
       - monitoring
 
 volumes:
-  timescale_data:
+  clickhouse_data:
+    driver: local
+  clickhouse_logs:
     driver: local
   grafana_data:
     driver: local

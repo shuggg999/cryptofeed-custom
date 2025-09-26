@@ -7,7 +7,7 @@ with native TTL support and optimal compression for cryptocurrency market data.
 '''
 import asyncio
 from collections import defaultdict
-from datetime import datetime as dt
+from datetime import datetime as dt, datetime
 from decimal import Decimal
 from typing import Tuple
 import logging
@@ -84,12 +84,18 @@ class ClickHouseCallback(BackendQueue):
         return timestamp
 
     def _format_decimal(self, value):
-        """格式化数值为Decimal类型"""
+        """格式化数值为ClickHouse兼容的数值类型"""
         if value is None:
             return None
         if isinstance(value, str):
-            return Decimal(value)
-        return Decimal(str(value))
+            try:
+                return float(value)  # 使用float而不是Decimal，避免ClickHouse序列化问题
+            except (ValueError, TypeError):
+                return 0.0
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return 0.0
 
     async def writer(self):
         """异步批量写入数据到ClickHouse"""
@@ -155,11 +161,12 @@ class CandlesClickHouse(ClickHouseCallback, BackendCallback):
     default_table = 'candles'
 
     def _prepare_data(self, data):
-        """准备K线数据 - 返回列表格式"""
+        """准备K线数据 - 返回列表格式 (匹配实际9列表结构)"""
         # 注意：data是Candle.to_dict()的结果，包含更多字段
         # 我们需要按照表结构顺序提取正确的字段
         return [
             self._format_timestamp(data.get('timestamp')),      # timestamp
+            data.get('exchange', ''),                           # exchange
             data.get('symbol'),                                 # symbol
             data.get('interval'),                               # interval
             self._format_decimal(data.get('open')),            # open
@@ -167,7 +174,6 @@ class CandlesClickHouse(ClickHouseCallback, BackendCallback):
             self._format_decimal(data.get('low')),             # low
             self._format_decimal(data.get('close')),           # close
             self._format_decimal(data.get('volume')),          # volume
-            self._format_timestamp(data.get('timestamp'))       # receipt_timestamp (使用timestamp作为接收时间)
         ]
 
 
@@ -211,9 +217,11 @@ class OpenInterestClickHouse(ClickHouseCallback, BackendCallback):
         """准备持仓量数据 - 返回列表格式"""
         return [
             self._format_timestamp(data.get('timestamp')),      # timestamp
+            data.get('exchange'),                               # exchange
             data.get('symbol'),                                 # symbol
             self._format_decimal(data.get('open_interest')),   # open_interest
-            self._format_timestamp(data.get('receipt_timestamp')) # receipt_timestamp
+            self._format_timestamp(data.get('receipt_timestamp')), # receipt_timestamp
+            self._format_timestamp(data.get('timestamp')).date() if data.get('timestamp') else datetime.now().date()  # date
         ]
 
 
@@ -222,14 +230,14 @@ class LiquidationsClickHouse(ClickHouseCallback, BackendCallback):
     default_table = 'liquidations'
 
     def _prepare_data(self, data):
-        """准备清算数据 - 返回列表格式"""
+        """准备清算数据 - 返回列表格式 (匹配实际6列表结构)"""
         return [
             self._format_timestamp(data.get('timestamp')),      # timestamp
+            data.get('exchange', ''),                           # exchange
             data.get('symbol'),                                 # symbol
             data.get('side'),                                   # side
-            self._format_decimal(data.get('quantity')),        # quantity
+            self._format_decimal(data.get('quantity')),        # amount (注意字段名映射)
             self._format_decimal(data.get('price')),           # price
-            self._format_timestamp(data.get('receipt_timestamp')) # receipt_timestamp
         ]
 
 
