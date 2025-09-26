@@ -160,20 +160,35 @@ class CandlesClickHouse(ClickHouseCallback, BackendCallback):
     """K线数据ClickHouse Backend"""
     default_table = 'candles'
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 导入数据标准化器
+        try:
+            from cryptofeed_api.services.data_normalizer import normalize_data
+            self.normalize_data = normalize_data
+        except ImportError:
+            LOG.warning("Data normalizer not available, using raw data")
+            self.normalize_data = lambda x, _: x
+
     def _prepare_data(self, data):
         """准备K线数据 - 返回列表格式 (匹配实际9列表结构)"""
         # 注意：data是Candle.to_dict()的结果，包含更多字段
         # 我们需要按照表结构顺序提取正确的字段
+
+        # 1. 数据标准化处理
+        normalized_data = self.normalize_data(data, 'candle')
+
+        # 2. 按照ClickHouse表结构准备数据
         return [
-            self._format_timestamp(data.get('timestamp')),      # timestamp
-            data.get('exchange', ''),                           # exchange
-            data.get('symbol'),                                 # symbol
-            data.get('interval'),                               # interval
-            self._format_decimal(data.get('open')),            # open
-            self._format_decimal(data.get('high')),            # high
-            self._format_decimal(data.get('low')),             # low
-            self._format_decimal(data.get('close')),           # close
-            self._format_decimal(data.get('volume')),          # volume
+            self._format_timestamp(normalized_data.get('timestamp')),      # timestamp
+            normalized_data.get('exchange', ''),                          # exchange (已标准化)
+            normalized_data.get('symbol'),                                 # symbol
+            normalized_data.get('interval'),                               # interval
+            self._format_decimal(normalized_data.get('open')),            # open
+            self._format_decimal(normalized_data.get('high')),            # high
+            self._format_decimal(normalized_data.get('low')),             # low
+            self._format_decimal(normalized_data.get('close')),           # close
+            self._format_decimal(normalized_data.get('volume')),          # volume
         ]
 
 

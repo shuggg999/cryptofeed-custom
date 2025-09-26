@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import clickhouse_connect
 
 from cryptofeed_api.monitor.config import config
+from cryptofeed_api.services.data_normalizer import normalize_data
 
 logger = logging.getLogger(__name__)
 
@@ -210,16 +211,33 @@ class DataBackfillService:
                             # timestamp, exchange, symbol, interval, open, high, low, close, volume
                             for kline in klines_data:
                                 open_time = datetime.fromtimestamp(kline[0] / 1000)
+
+                                # 构造原始数据字典用于标准化
+                                raw_data = {
+                                    'timestamp': open_time,
+                                    'exchange': 'binance',  # REST API原始名称
+                                    'symbol': symbol,
+                                    'interval': interval,
+                                    'open': float(kline[1]),
+                                    'high': float(kline[2]),
+                                    'low': float(kline[3]),
+                                    'close': float(kline[4]),
+                                    'volume': float(kline[5])
+                                }
+
+                                # 数据标准化处理
+                                normalized_data = normalize_data(raw_data, 'candle')
+
                                 all_insert_data.append([
-                                    open_time,                    # timestamp
-                                    'binance',                    # exchange
-                                    symbol,                       # symbol
-                                    interval,                     # interval
-                                    float(kline[1]),              # open
-                                    float(kline[2]),              # high
-                                    float(kline[3]),              # low
-                                    float(kline[4]),              # close
-                                    float(kline[5])               # volume
+                                    normalized_data['timestamp'],      # timestamp
+                                    normalized_data['exchange'],       # exchange (标准化后)
+                                    normalized_data['symbol'],         # symbol
+                                    normalized_data['interval'],       # interval
+                                    normalized_data['open'],           # open
+                                    normalized_data['high'],           # high
+                                    normalized_data['low'],            # low
+                                    normalized_data['close'],          # close
+                                    normalized_data['volume']          # volume
                                 ])
 
                             logger.info(f"批次 {batch_num} 获取到 {len(klines_data)} 条数据")
