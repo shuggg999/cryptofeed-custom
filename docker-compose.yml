@@ -67,7 +67,6 @@ services:
       - "8080:8080"
     volumes:
       - ./logs:/app/logs
-      - ./data:/app/data
       - ./config:/app/config
     networks:
       - cryptofeed-network
