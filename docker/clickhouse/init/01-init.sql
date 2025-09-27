@@ -20,25 +20,22 @@ CREATE TABLE IF NOT EXISTS trades (
 PARTITION BY toYYYYMM(date)
 ORDER BY (symbol, timestamp)
 TTL toDateTime(timestamp) + INTERVAL 90 DAY  -- 自动删除90天前的数据
-SETTINGS index_granularity = 8192,
-         codec = 'ZSTD(3)';  -- 使用ZSTD压缩，压缩率10-15倍
+SETTINGS index_granularity = 8192;
 
 -- 2. K线数据表（分级存储，不同周期不同TTL，自动去重）
 CREATE TABLE IF NOT EXISTS candles (
     timestamp DateTime64(3),
-    symbol String,
     exchange String,
-    interval Enum8('1m'=1, '5m'=5, '15m'=15, '30m'=30, '1h'=60, '4h'=240, '1d'=1440),
+    symbol String,
+    interval String,
     open Float64,      -- 统一使用Float64，简单高效
     high Float64,      -- 支持任意大小的价格和交易量
     low Float64,       -- 无需精度验证，行业标准做法
     close Float64,
     volume Float64,    -- 完美兼容DOGE等meme币的大交易量
-    trades UInt32,
-    receipt_timestamp DateTime64(3) DEFAULT now64(3),
-    date Date DEFAULT toDate(timestamp)
-) ENGINE = ReplacingMergeTree(receipt_timestamp)
-PARTITION BY (interval, toYYYYMM(date))
+    trades UInt32      -- 交易次数字段，用于市场微观结构分析
+) ENGINE = ReplacingMergeTree()
+PARTITION BY (interval, toYYYYMM(timestamp))
 ORDER BY (symbol, exchange, interval, timestamp)
 TTL toDateTime(timestamp) + CASE
     WHEN interval = '1m' THEN toIntervalDay(30)    -- 1分钟K线保留30天
@@ -50,8 +47,7 @@ TTL toDateTime(timestamp) + CASE
     WHEN interval = '1d' THEN toIntervalDay(3650)  -- 日K线保留10年
     ELSE toIntervalDay(365)
 END
-SETTINGS index_granularity = 8192,
-         codec = 'DoubleDelta, ZSTD(3)';  -- 时序数据优化压缩
+SETTINGS index_granularity = 8192;
 
 -- 3. 资金费率表
 CREATE TABLE IF NOT EXISTS funding (
@@ -68,8 +64,7 @@ CREATE TABLE IF NOT EXISTS funding (
 PARTITION BY toYYYYMM(date)
 ORDER BY (symbol, timestamp)
 TTL toDateTime(timestamp) + INTERVAL 365 DAY  -- 资金费率保留1年
-SETTINGS index_granularity = 8192,
-         codec = 'ZSTD(3)';
+SETTINGS index_granularity = 8192;
 
 -- 4. 清算数据表
 CREATE TABLE IF NOT EXISTS liquidations (
@@ -118,7 +113,7 @@ AS SELECT
     min(low) as low,
     argMax(close, timestamp) as close,
     sum(volume) as volume,
-    sum(trades) as trades,
+    count() as trades,
     now64(3) as receipt_timestamp,
     toDate(timestamp) as date
 FROM candles

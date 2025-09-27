@@ -2,6 +2,7 @@
 数据标准化服务 - 统一不同数据源的格式
 """
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,8 @@ class DataNormalizer:
 
     def __init__(self):
         self.exchange_normalizer = ExchangeNormalizer()
+        # 北京时区 (UTC+8)
+        self.beijing_tz = timezone(timedelta(hours=8))
 
     def normalize_candle_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -75,7 +78,12 @@ class DataNormalizer:
         if 'interval' in normalized_data:
             normalized_data['interval'] = self._normalize_interval(normalized_data['interval'])
 
-        # 4. 统一数值格式
+        # 4. 统一时间戳格式（转换为北京时间）
+        for timestamp_field in ['timestamp', 'receipt_timestamp']:
+            if timestamp_field in normalized_data:
+                normalized_data[timestamp_field] = self._normalize_timestamp(normalized_data[timestamp_field])
+
+        # 5. 统一数值格式
         for field in ['open', 'high', 'low', 'close', 'volume']:
             if field in normalized_data and normalized_data[field] is not None:
                 try:
@@ -131,6 +139,38 @@ class DataNormalizer:
         }
 
         return interval_mapping.get(interval, interval)
+
+    def _normalize_timestamp(self, timestamp):
+        """
+        标准化时间戳为北京时间
+
+        Args:
+            timestamp: 原始时间戳（可以是float, int或datetime对象）
+
+        Returns:
+            标准化后的北京时间datetime对象
+        """
+        if timestamp is None:
+            return None
+
+        if isinstance(timestamp, (int, float)):
+            # 先转换为UTC时间，然后转换为北京时间
+            utc_dt = datetime.utcfromtimestamp(timestamp).replace(tzinfo=timezone.utc)
+            beijing_dt = utc_dt.astimezone(self.beijing_tz)
+            # 返回naive datetime（去掉时区信息）
+            return beijing_dt.replace(tzinfo=None)
+        elif isinstance(timestamp, datetime):
+            # 如果已经是datetime对象，检查是否有时区信息
+            if timestamp.tzinfo is None:
+                # 假设naive datetime是UTC时间
+                utc_dt = timestamp.replace(tzinfo=timezone.utc)
+            else:
+                utc_dt = timestamp.astimezone(timezone.utc)
+
+            beijing_dt = utc_dt.astimezone(self.beijing_tz)
+            return beijing_dt.replace(tzinfo=None)
+
+        return timestamp
 
 
 # 全局数据标准化实例

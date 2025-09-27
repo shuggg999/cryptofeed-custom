@@ -78,14 +78,20 @@ class DataBackfillService:
 
         intervals = ['1d', '4h', '30m', '5m', '1m']
 
-        # 从配置中获取每个时间间隔的回填天数
-        lookback_by_interval = config.get('data_backfill.lookback_by_interval', {
+        # 从统一的数据保留策略配置中获取每个时间间隔的回填天数
+        retention_config = config.get('data_retention', {})
+        candles_retention = retention_config.get('candles', {})
+
+        # 如果没有配置，使用默认值（与data_retention保持一致）
+        lookback_by_interval = candles_retention or {
             '1d': 1095,    # 3年
             '4h': 730,     # 2年
             '30m': 365,    # 1年
             '5m': 90,      # 90天
             '1m': 30       # 30天
-        })
+        }
+
+        logger.info(f"📋 使用统一数据保留策略进行回填: {lookback_by_interval}")
 
         try:
             for symbol in symbols:
@@ -120,8 +126,8 @@ class DataBackfillService:
                         # 计算应该回填到的开始时间
                         target_start_time = now - timedelta(days=interval_lookback_days)
 
-                        # 如果最新数据时间晚于目标开始时间，说明历史数据不完整
-                        if latest_time > target_start_time:
+                        # 如果最新数据时间早于目标开始时间，说明历史数据不完整
+                        if latest_time < target_start_time:
                             logger.info(f"数据不完整: {symbol} {interval} 最新数据 {latest_time}，应该从 {target_start_time} 开始")
 
                             task = BackfillTask(
@@ -137,7 +143,13 @@ class DataBackfillService:
 
                         # 检查是否有最新的缺口（从最新数据到现在）
                         time_since_latest = now - latest_time
-                        if time_since_latest.total_seconds() > 3600:  # 超过1小时没更新
+
+                        # 根据时间间隔调整最新缺口检查阈值
+                        interval_minutes = self._get_interval_minutes(interval)
+                        threshold_seconds = max(interval_minutes * 60 * 3, 3600)  # 至少3个间隔或1小时
+
+                        if time_since_latest.total_seconds() > threshold_seconds:
+                            # 只回填从最新数据到现在的缺口，不回填历史
                             task = BackfillTask(
                                 gap_log_id=0,
                                 symbol=symbol,
@@ -147,7 +159,9 @@ class DataBackfillService:
                                 end_time=now
                             )
                             tasks.append(task)
-                            logger.info(f"最新缺口: {symbol} {interval} 从 {latest_time} 到 {now}")
+                            logger.info(f"最新缺口: {symbol} {interval} 从 {latest_time} 到 {now} (延迟{time_since_latest.total_seconds()/3600:.1f}小时)")
+                        else:
+                            logger.info(f"数据完整: {symbol} {interval} 最新数据 {latest_time}，无需回填")
 
                     else:
                         # 完全没有数据，从指定天数前开始回填
@@ -521,3 +535,11 @@ class DataBackfillService:
             except Exception as e:
                 logger.error(f"Error in continuous backfill: {e}")
                 time.sleep(300)  # 错误时等待5分钟再重试
+
+    def _get_interval_minutes(self, interval: str) -> int:
+        """获取时间间隔的分钟数"""
+        interval_mapping = {
+            '1m': 1, '5m': 5, '15m': 15, '30m': 30,
+            '1h': 60, '4h': 240, '1d': 1440
+        }
+        return interval_mapping.get(interval, 60)

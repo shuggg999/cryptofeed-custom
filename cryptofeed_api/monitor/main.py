@@ -256,7 +256,7 @@ class SmartTradeClickHouse:
             )
 
             # Prepare data for ClickHouse insertion (match table schema order)
-            # Schema: timestamp, exchange, symbol, side, amount, price, id
+            # Schema: timestamp, exchange, symbol, side, amount, price, trade_id, receipt_timestamp, date
             data = [
                 datetime.fromtimestamp(trade.timestamp) if trade.timestamp else datetime.now(),
                 trade.exchange,
@@ -264,10 +264,12 @@ class SmartTradeClickHouse:
                 trade.side,
                 float(trade.amount),
                 float(trade.price),
-                str(trade.id) if hasattr(trade, 'id') and trade.id else ''
+                str(trade.id) if hasattr(trade, 'id') and trade.id else '',
+                datetime.fromtimestamp(receipt_timestamp) if receipt_timestamp else datetime.now(),
+                datetime.fromtimestamp(trade.timestamp).date() if trade.timestamp else datetime.now().date()
             ]
 
-            columns = ['timestamp', 'exchange', 'symbol', 'side', 'amount', 'price', 'id']
+            columns = ['timestamp', 'exchange', 'symbol', 'side', 'amount', 'price', 'trade_id', 'receipt_timestamp', 'date']
             client.insert('trades', [data], column_names=columns)
             client.close()
 
@@ -1278,24 +1280,36 @@ def main():
         integrity_enabled = config.get('data_integrity.enabled', True)
         backfill_enabled = config.get('data_backfill.enabled', False)
 
+        # 改为异步并行执行：先启动实时监控，后台进行回填
         if integrity_enabled or backfill_enabled:
-            logger.info("🔍 Running data integrity and backfill checks...")
+            logger.info("🔍 启动后台数据完整性检查和回填服务...")
 
-            # 创建新的事件循环来运行初始化任务
+            # 创建后台任务
             import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            import threading
 
-            try:
-                if integrity_enabled:
-                    loop.run_until_complete(start_data_integrity_service())
+            def run_background_services():
+                """在后台线程中运行数据完整性检查和回填"""
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-                if backfill_enabled:
-                    loop.run_until_complete(start_backfill_service())
-            finally:
-                loop.close()
+                try:
+                    if integrity_enabled:
+                        loop.run_until_complete(start_data_integrity_service())
 
-        # Run monitoring system
+                    if backfill_enabled:
+                        loop.run_until_complete(start_backfill_service())
+                except Exception as e:
+                    logger.error(f"Background services error: {e}")
+                finally:
+                    loop.close()
+
+            # 启动后台线程（非阻塞）
+            background_thread = threading.Thread(target=run_background_services, daemon=True)
+            background_thread.start()
+            logger.info("✅ 后台服务已启动，同时启动实时监控...")
+
+        # 立即启动实时监控系统（不等待回填完成）
         monitor.run()
     except Exception as e:
         logger.error(f"Startup failed: {e}")

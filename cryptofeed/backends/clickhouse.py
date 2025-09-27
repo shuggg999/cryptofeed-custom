@@ -7,7 +7,7 @@ with native TTL support and optimal compression for cryptocurrency market data.
 '''
 import asyncio
 from collections import defaultdict
-from datetime import datetime as dt, datetime
+from datetime import datetime as dt, datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Tuple
 import logging
@@ -76,11 +76,16 @@ class ClickHouseCallback(BackendQueue):
                 raise
 
     def _format_timestamp(self, timestamp):
-        """格式化时间戳为ClickHouse DateTime64格式"""
+        """格式化时间戳为ClickHouse DateTime64格式（北京时间）"""
         if timestamp is None:
             return None
         if isinstance(timestamp, (int, float)):
-            return dt.utcfromtimestamp(timestamp)
+            # 转换为北京时间（UTC+8）
+            utc_dt = dt.utcfromtimestamp(timestamp).replace(tzinfo=timezone.utc)
+            beijing_tz = timezone(timedelta(hours=8))
+            beijing_dt = utc_dt.astimezone(beijing_tz)
+            # 返回naive datetime（去掉时区信息），因为表字段现在是不带时区的DateTime64(3)
+            return beijing_dt.replace(tzinfo=None)
         return timestamp
 
     def _format_decimal(self, value):
@@ -144,15 +149,20 @@ class TradeClickHouse(ClickHouseCallback, BackendCallback):
     default_table = 'trades'
 
     def _prepare_data(self, data):
-        """准备交易数据 - 返回列表格式以匹配ClickHouse表结构"""
+        """准备交易数据 - 返回列表格式以匹配ClickHouse表结构（9字段）"""
+        # 兼容处理trade_id字段名：优先使用'trade_id'，再尝试'id'
+        trade_id = data.get('trade_id') or data.get('id', '')
+
         return [
             self._format_timestamp(data.get('timestamp')),      # timestamp
+            data.get('exchange', ''),                           # exchange
             data.get('symbol'),                                 # symbol
             data.get('side'),                                   # side
             self._format_decimal(data.get('amount')),          # amount
             self._format_decimal(data.get('price')),           # price
-            data.get('id', ''),                                # trade_id
+            str(trade_id),                                     # trade_id
             self._format_timestamp(data.get('receipt_timestamp')) # receipt_timestamp
+            # date字段由数据库自动生成，不需要手动插入
         ]
 
 
@@ -171,14 +181,14 @@ class CandlesClickHouse(ClickHouseCallback, BackendCallback):
             self.normalize_data = lambda x, _: x
 
     def _prepare_data(self, data):
-        """准备K线数据 - 返回列表格式 (匹配实际9列表结构)"""
+        """准备K线数据 - 返回列表格式 (匹配10字段表结构)"""
         # 注意：data是Candle.to_dict()的结果，包含更多字段
         # 我们需要按照表结构顺序提取正确的字段
 
         # 1. 数据标准化处理
         normalized_data = self.normalize_data(data, 'candle')
 
-        # 2. 按照ClickHouse表结构准备数据（9个字段）
+        # 2. 按照ClickHouse表结构准备数据（10个字段）
         return [
             self._format_timestamp(normalized_data.get('timestamp')),      # timestamp
             normalized_data.get('exchange', ''),                          # exchange (已标准化)
@@ -188,7 +198,8 @@ class CandlesClickHouse(ClickHouseCallback, BackendCallback):
             self._format_decimal(normalized_data.get('high')),            # high
             self._format_decimal(normalized_data.get('low')),             # low
             self._format_decimal(normalized_data.get('close')),           # close
-            self._format_decimal(normalized_data.get('volume'))           # volume
+            self._format_decimal(normalized_data.get('volume')),          # volume
+            int(normalized_data.get('trades', 0))                        # trades (交易次数)
         ]
 
 
@@ -236,7 +247,7 @@ class OpenInterestClickHouse(ClickHouseCallback, BackendCallback):
             data.get('symbol'),                                 # symbol
             self._format_decimal(data.get('open_interest')),   # open_interest
             self._format_timestamp(data.get('receipt_timestamp')), # receipt_timestamp
-            self._format_timestamp(data.get('timestamp')).date() if data.get('timestamp') else datetime.now().date()  # date
+            self._format_timestamp(data.get('timestamp')).date() if data.get('timestamp') else datetime.now(timezone(timedelta(hours=8))).date()  # date (北京时间)
         ]
 
 
@@ -245,14 +256,22 @@ class LiquidationsClickHouse(ClickHouseCallback, BackendCallback):
     default_table = 'liquidations'
 
     def _prepare_data(self, data):
-        """准备清算数据 - 返回列表格式 (匹配实际6列表结构)"""
+        """准备清算数据 - 返回列表格式 (匹配实际9字段表结构)"""
+        # 兼容处理liquidation_id字段名
+        liquidation_id = data.get('liquidation_id') or data.get('id', '')
+
+        timestamp = self._format_timestamp(data.get('timestamp'))
+
         return [
-            self._format_timestamp(data.get('timestamp')),      # timestamp
+            timestamp,                                          # timestamp
             data.get('exchange', ''),                           # exchange
             data.get('symbol'),                                 # symbol
             data.get('side'),                                   # side
-            self._format_decimal(data.get('quantity')),        # amount (注意字段名映射)
+            self._format_decimal(data.get('quantity')),        # quantity
             self._format_decimal(data.get('price')),           # price
+            str(liquidation_id),                               # liquidation_id
+            self._format_timestamp(data.get('receipt_timestamp')), # receipt_timestamp
+            timestamp.date() if timestamp else datetime.now(timezone(timedelta(hours=8))).date()  # date (北京时间)
         ]
 
 

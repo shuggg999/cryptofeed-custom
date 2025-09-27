@@ -1,21 +1,17 @@
-# Cryptofeed Configuration
+# Cryptofeed 精简配置 - 统一数据保留策略
 
-# ClickHouse Configuration (时序数据库)
+# ClickHouse数据库配置
 clickhouse:
-  host: clickhouse  # Docker服务名，本地开发时使用localhost
+  host: localhost  # 本地测试使用localhost
   port: 8123
   user: default
   password: password123
   database: cryptofeed
   secure: false
 
-# Symbol selection configuration
+# 交易对配置
 symbols:
-  mode: "custom"  # Options: "all", "custom", "filter"
-  max_contracts: 500  # Maximum number of contracts to monitor
-  update_interval: 300  # Check for new/removed symbols every 5 minutes
-
-  # Custom symbol list (used when mode = "custom")
+  mode: "custom"  # 使用自定义交易对列表
   custom_list:
     - "BTC-USDT-PERP"
     - "ETH-USDT-PERP"
@@ -23,23 +19,7 @@ symbols:
     - "DOGE-USDT-PERP"
     - "ADA-USDT-PERP"
 
-  # Filtering criteria (used when mode = "filter")
-  filters:
-    min_24h_volume: 1000000  # Minimum 24h volume in USD
-    top_n_by_volume: 100     # Take top N symbols by 24h volume
-    exclude_patterns:        # Exclude symbols matching these patterns
-      - "*TEST*"
-      - "*BULL*"
-      - "*BEAR*"
-    include_patterns:        # Only include symbols matching these patterns (optional)
-      - "*USDT-PERP"
-
-connection_pool:
-  streams_per_connection: 1000
-  auto_scaling:
-    enabled: true
-    symbol_check_interval: 300
-
+# 数据收集类型
 collection:
   data_types:
     - trades
@@ -52,73 +32,59 @@ collection:
     - liquidations
     - open_interest
 
+# 统一数据保留策略（同时用于TTL、监控检查、历史回填）
+data_retention:
+  # K线数据保留策略（天数）
+  candles:
+    "1m": 30      # 1分钟K线：30天
+    "5m": 90      # 5分钟K线：90天
+    "15m": 180    # 15分钟K线：180天
+    "30m": 365    # 30分钟K线：1年
+    "4h": 730     # 4小时K线：2年
+    "1d": 1095    # 日K线：3年
+
+  # 其他数据保留策略（天数）
+  trades: 90           # 交易数据：90天
+  funding: 365         # 资金费率：1年
+  liquidations: 180    # 清算数据：180天
+  open_interest: 365   # 持仓量：1年
+
+# 历史数据回填配置（使用data_retention中的配置）
+data_backfill:
+  enabled: true              # 启用历史数据回填
+  smart_mode: true           # 启用智能回填模式
+  startup_backfill: true     # 启动时运行一次回填
+  check_interval_hours: 6    # 检查间隔（小时）
+  max_concurrent_tasks: 5    # 最大并发回填任务数
+
+  # 智能回填策略
+  smart_backfill:
+    # 快速检查（只查时间戳，不下载数据）
+    quick_check: true
+    # 优先级策略
+    priority_strategy:
+      urgent_threshold_hours: 1     # 紧急缺口阈值（小时）
+      recent_threshold_hours: 24    # 近期缺口阈值（小时）
+      daily_threshold_days: 7       # 日常缺口阈值（天）
+    # 并发控制
+    concurrent_pools:
+      urgent: 3              # 紧急任务最大并发
+      recent: 2              # 近期任务最大并发
+      historical: 1          # 历史任务最大并发
+
+  # API限制配置
+  rate_limits:
+    retry_attempts: 3         # 重试次数
+    batch_size: 1500         # 每批次处理数量（Binance官方最大1500）
+    request_delay_ms: 50     # 请求间延迟（毫秒）
+
+# 监控配置
 monitoring:
   metrics_enabled: true
   health_check_port: 8080
   stats_interval: 300
 
+# 日志配置
 logging:
   level: INFO
   filename: logs/cryptofeed_monitor.log
-
-# 数据保留策略配置
-data_retention:
-  # K线数据保留策略（天数）
-  candles:
-    "1m": 30      # 1分钟K线：数据量大，保留30天
-    "5m": 90      # 5分钟K线：保留90天
-    "15m": 180    # 15分钟K线：保留180天
-    "30m": 365    # 30分钟K线：保留1年
-    "4h": 730     # 4小时K线：保留2年
-    "1d": 1095    # 日K线：保留3年
-
-  # 交易数据保留策略（天数）
-  trades: 90      # 交易数据保留90天
-
-  # 资金费率保留策略（天数）
-  funding: 365    # 资金费率保留1年
-
-  # 清算数据保留策略（天数）
-  liquidations: 180  # 清算数据保留180天
-
-  # 持仓量数据保留策略（天数）
-  open_interest: 365  # 持仓量保留1年
-
-# 数据完整性检查配置
-data_integrity:
-  enabled: true              # 启用数据完整性检查
-  startup_check: true        # 启动时运行完整性检查
-  check_interval_hours: 24   # 定期检查间隔（小时）
-  lookback_days: 3           # 检查最近N天的数据
-  max_symbols: 10            # 每次检查的最大交易对数量
-
-  # 启用的检查类型
-  check_types:
-    candles: true
-    trades: false    # 交易数据量大，暂时关闭检查
-    funding: true
-    liquidations: true
-    open_interest: true
-
-# 历史数据回填配置
-data_backfill:
-  enabled: true              # 启用历史数据回填 (设为true启用)
-  startup_backfill: true     # 启动时运行一次回填
-  continuous_backfill: false # 持续后台回填（慎用，会增加API负载）
-  check_interval_hours: 6    # 检查间隔（小时）
-  max_concurrent_tasks: 5    # 最大并发回填任务数 (优化: 2→5)
-
-  # 各时间间隔的回填天数（唯一配置）
-  lookback_by_interval:
-    "1m": 30      # 1分钟线回填30天
-    "5m": 90      # 5分钟线回填90天
-    "30m": 365    # 30分钟线回填365天（1年）
-    "4h": 730     # 4小时线回填730天（2年）
-    "1d": 1095    # 日线回填1095天（3年）
-  default_lookback_days: 7  # 默认回填天数（兜底值）
-
-  # API限制配置 (优化速度，使用官方最大值)
-  rate_limits:
-    retry_attempts: 5         # 重试次数 (优化: 3→5)
-    batch_size: 1500         # 每批次处理数量 (Binance官方最大1500)
-    request_delay_ms: 50     # 请求间延迟 (优化: 100→50ms，接近理论极限)
