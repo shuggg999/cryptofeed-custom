@@ -37,7 +37,7 @@ RUN cd /app && \
     echo "Types module setup complete."
 
 # Create necessary directories
-RUN mkdir -p logs data
+RUN mkdir -p logs
 
 # Set environment variables
 ENV PYTHONPATH=/app

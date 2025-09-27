@@ -106,36 +106,19 @@ data_backfill:
   startup_backfill: true     # 启动时运行一次回填
   continuous_backfill: false # 持续后台回填（慎用，会增加API负载）
   check_interval_hours: 6    # 检查间隔（小时）
-  max_concurrent_tasks: 2    # 最大并发回填任务数
+  max_concurrent_tasks: 5    # 最大并发回填任务数 (优化: 2→5)
 
-  # 回填策略（根据数据保留策略自动计算回填天数）
-  # 每个时间间隔使用对应的保留天数作为回填天数
-  lookback_by_interval:  # 各时间间隔的回填天数
+  # 各时间间隔的回填天数（唯一配置）
+  lookback_by_interval:
     "1m": 30      # 1分钟线回填30天
     "5m": 90      # 5分钟线回填90天
-    "15m": 180    # 15分钟线回填180天
-    "30m": 365    # 30分钟线回填365天
-    "4h": 730     # 4小时线回填730天
-    "1d": 1095    # 日线回填1095天
+    "30m": 365    # 30分钟线回填365天（1年）
+    "4h": 730     # 4小时线回填730天（2年）
+    "1d": 1095    # 日线回填1095天（3年）
   default_lookback_days: 7  # 默认回填天数（兜底值）
 
-  strategy:
-    # 不同数据类型的历史数据下载天数
-    candles:
-      "1m": 7       # 1分钟K线补充最近7天
-      "5m": 30      # 5分钟K线补充最近30天
-      "15m": 90     # 15分钟K线补充最近90天
-      "30m": 180    # 30分钟K线补充最近180天
-      "4h": 365     # 4小时K线补充最近1年
-      "1d": 730     # 日K线补充最近2年
-
-    trades: 7         # 交易数据补充最近7天（减少负载）
-    funding: 90       # 资金费率补充最近90天
-    liquidations: 60  # 清算数据补充最近60天
-    open_interest: 90 # 持仓量补充最近90天
-
-  # API限制配置
+  # API限制配置 (优化速度，使用官方最大值)
   rate_limits:
-    retry_attempts: 3         # 重试次数
-    batch_size: 1000         # 每批次处理数量
-    request_delay_ms: 200    # 请求间延迟（毫秒）
+    retry_attempts: 5         # 重试次数 (优化: 3→5)
+    batch_size: 1500         # 每批次处理数量 (Binance官方最大1500)
+    request_delay_ms: 50     # 请求间延迟 (优化: 100→50ms，接近理论极限)

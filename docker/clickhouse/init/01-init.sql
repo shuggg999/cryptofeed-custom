@@ -23,23 +23,23 @@ TTL toDateTime(timestamp) + INTERVAL 90 DAY  -- 自动删除90天前的数据
 SETTINGS index_granularity = 8192,
          codec = 'ZSTD(3)';  -- 使用ZSTD压缩，压缩率10-15倍
 
--- 2. K线数据表（分级存储，不同周期不同TTL）
+-- 2. K线数据表（分级存储，不同周期不同TTL，自动去重）
 CREATE TABLE IF NOT EXISTS candles (
     timestamp DateTime64(3),
     symbol String,
     exchange String,
     interval Enum8('1m'=1, '5m'=5, '15m'=15, '30m'=30, '1h'=60, '4h'=240, '1d'=1440),
-    open Decimal64(8),
-    high Decimal64(8),
-    low Decimal64(8),
-    close Decimal64(8),
-    volume Decimal64(8),
+    open Float64,      -- 统一使用Float64，简单高效
+    high Float64,      -- 支持任意大小的价格和交易量
+    low Float64,       -- 无需精度验证，行业标准做法
+    close Float64,
+    volume Float64,    -- 完美兼容DOGE等meme币的大交易量
     trades UInt32,
     receipt_timestamp DateTime64(3) DEFAULT now64(3),
     date Date DEFAULT toDate(timestamp)
-) ENGINE = MergeTree()
+) ENGINE = ReplacingMergeTree(receipt_timestamp)
 PARTITION BY (interval, toYYYYMM(date))
-ORDER BY (interval, symbol, timestamp)
+ORDER BY (symbol, exchange, interval, timestamp)
 TTL toDateTime(timestamp) + CASE
     WHEN interval = '1m' THEN toIntervalDay(30)    -- 1分钟K线保留30天
     WHEN interval = '5m' THEN toIntervalDay(90)    -- 5分钟K线保留90天

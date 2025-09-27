@@ -178,7 +178,7 @@ class CandlesClickHouse(ClickHouseCallback, BackendCallback):
         # 1. 数据标准化处理
         normalized_data = self.normalize_data(data, 'candle')
 
-        # 2. 按照ClickHouse表结构准备数据
+        # 2. 按照ClickHouse表结构准备数据（9个字段）
         return [
             self._format_timestamp(normalized_data.get('timestamp')),      # timestamp
             normalized_data.get('exchange', ''),                          # exchange (已标准化)
@@ -188,7 +188,7 @@ class CandlesClickHouse(ClickHouseCallback, BackendCallback):
             self._format_decimal(normalized_data.get('high')),            # high
             self._format_decimal(normalized_data.get('low')),             # low
             self._format_decimal(normalized_data.get('close')),           # close
-            self._format_decimal(normalized_data.get('volume')),          # volume
+            self._format_decimal(normalized_data.get('volume'))           # volume
         ]
 
 
