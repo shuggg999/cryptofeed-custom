@@ -2,11 +2,12 @@
 数据完整性检查服务 - ClickHouse版本
 检查数据缺口，识别需要补充的历史数据
 """
+
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
 
 import clickhouse_connect
 
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DataGap:
     """数据缺口信息"""
+
     symbol: str
     data_type: str  # 'trades', 'candles', 'funding'
     interval: Optional[str]  # 仅用于candles
@@ -34,6 +36,7 @@ class DataGap:
 @dataclass
 class DataStats:
     """数据统计信息"""
+
     symbol: str
     data_type: str
     interval: Optional[str]
@@ -47,24 +50,24 @@ class DataIntegrityChecker:
     """数据完整性检查器 - ClickHouse版本"""
 
     def __init__(self):
-        self.supported_intervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
+        self.supported_intervals = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
         self.expected_intervals = {
-            '1m': timedelta(minutes=1),
-            '5m': timedelta(minutes=5),
-            '15m': timedelta(minutes=15),
-            '30m': timedelta(minutes=30),
-            '1h': timedelta(hours=1),
-            '4h': timedelta(hours=4),
-            '1d': timedelta(days=1)
+            "1m": timedelta(minutes=1),
+            "5m": timedelta(minutes=5),
+            "15m": timedelta(minutes=15),
+            "30m": timedelta(minutes=30),
+            "1h": timedelta(hours=1),
+            "4h": timedelta(hours=4),
+            "1d": timedelta(days=1),
         }
 
         # ClickHouse连接配置
         self.ch_config = {
-            'host': config.get('clickhouse.host', 'localhost'),
-            'port': config.get('clickhouse.port', 8123),
-            'user': config.get('clickhouse.user', 'default'),
-            'password': config.get('clickhouse.password', 'password123'),
-            'database': config.get('clickhouse.database', 'cryptofeed')
+            "host": config.get("clickhouse.host", "localhost"),
+            "port": config.get("clickhouse.port", 8123),
+            "user": config.get("clickhouse.user", "default"),
+            "password": config.get("clickhouse.password", "password123"),
+            "database": config.get("clickhouse.database", "cryptofeed"),
         }
 
     def check_candle_gaps(
@@ -73,7 +76,7 @@ class DataIntegrityChecker:
         interval: str,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
-        max_gap_minutes: int = 30
+        max_gap_minutes: int = 30,
     ) -> List[DataGap]:
         """
         检查K线数据缺口 - ClickHouse版本
@@ -129,7 +132,7 @@ class DataIntegrityChecker:
             max_gap_delta = timedelta(minutes=max_gap_minutes)
 
             for i in range(1, len(timestamps)):
-                prev_time = timestamps[i-1]
+                prev_time = timestamps[i - 1]
                 curr_time = timestamps[i]
                 gap_duration = curr_time - prev_time
 
@@ -137,11 +140,11 @@ class DataIntegrityChecker:
                 if gap_duration > expected_delta + max_gap_delta:
                     gap = DataGap(
                         symbol=symbol,
-                        data_type='candles',
+                        data_type="candles",
                         interval=interval,
                         gap_start=prev_time + expected_delta,
                         gap_end=curr_time,
-                        gap_duration_hours=0  # 会在__post_init__中计算
+                        gap_duration_hours=0,  # 会在__post_init__中计算
                     )
                     gaps.append(gap)
 
@@ -149,7 +152,7 @@ class DataIntegrityChecker:
             return gaps
 
         finally:
-            if 'client' in locals():
+            if "client" in locals():
                 client.close()
 
     def check_trade_gaps(
@@ -157,7 +160,7 @@ class DataIntegrityChecker:
         symbol: str,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
-        max_gap_minutes: int = 5
+        max_gap_minutes: int = 5,
     ) -> List[DataGap]:
         """
         检查交易数据缺口 - ClickHouse版本
@@ -211,7 +214,7 @@ class DataIntegrityChecker:
             max_gap_delta = timedelta(minutes=max_gap_minutes)
 
             for i in range(1, len(minute_data)):
-                prev_minute = minute_data[i-1][0]
+                prev_minute = minute_data[i - 1][0]
                 curr_minute = minute_data[i][0]
                 gap_duration = curr_minute - prev_minute
 
@@ -219,11 +222,11 @@ class DataIntegrityChecker:
                 if gap_duration > max_gap_delta:
                     gap = DataGap(
                         symbol=symbol,
-                        data_type='trades',
+                        data_type="trades",
                         interval=None,
                         gap_start=prev_minute + timedelta(minutes=1),
                         gap_end=curr_minute,
-                        gap_duration_hours=0
+                        gap_duration_hours=0,
                     )
                     gaps.append(gap)
 
@@ -231,14 +234,11 @@ class DataIntegrityChecker:
             return gaps
 
         finally:
-            if 'client' in locals():
+            if "client" in locals():
                 client.close()
 
     def check_funding_gaps(
-        self,
-        symbol: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
+        self, symbol: str, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
     ) -> List[DataGap]:
         """
         检查资金费率数据缺口 - ClickHouse版本
@@ -287,18 +287,18 @@ class DataIntegrityChecker:
 
             gaps = []
             for i in range(1, len(timestamps)):
-                prev_time = timestamps[i-1]
+                prev_time = timestamps[i - 1]
                 curr_time = timestamps[i]
                 gap_duration = curr_time - prev_time
 
                 if gap_duration > expected_interval + max_gap_delta:
                     gap = DataGap(
                         symbol=symbol,
-                        data_type='funding',
+                        data_type="funding",
                         interval=None,
                         gap_start=prev_time + expected_interval,
                         gap_end=curr_time,
-                        gap_duration_hours=0
+                        gap_duration_hours=0,
                     )
                     gaps.append(gap)
 
@@ -306,15 +306,10 @@ class DataIntegrityChecker:
             return gaps
 
         finally:
-            if 'client' in locals():
+            if "client" in locals():
                 client.close()
 
-    def get_data_stats(
-        self,
-        symbol: str,
-        data_type: str = "candles",
-        interval: Optional[str] = None
-    ) -> DataStats:
+    def get_data_stats(self, symbol: str, data_type: str = "candles", interval: Optional[str] = None) -> DataStats:
         """
         获取数据统计信息 - ClickHouse版本
 
@@ -386,11 +381,11 @@ class DataIntegrityChecker:
                 earliest_time=row[0] if row[0] else None,
                 latest_time=row[1] if row[1] else None,
                 total_count=row[2] if row[2] else 0,
-                gaps_found=gap_count
+                gaps_found=gap_count,
             )
 
         finally:
-            if 'client' in locals():
+            if "client" in locals():
                 client.close()
 
     def log_data_gaps(self, gaps: List[DataGap]) -> int:
@@ -408,8 +403,10 @@ class DataIntegrityChecker:
 
         # ClickHouse版本暂时只记录到日志，不存储到数据库
         for gap in gaps:
-            logger.info(f"Data gap detected: {gap.symbol} {gap.data_type} {gap.interval} "
-                       f"from {gap.gap_start} to {gap.gap_end} ({gap.gap_duration_hours:.2f} hours)")
+            logger.info(
+                f"Data gap detected: {gap.symbol} {gap.data_type} {gap.interval} "
+                f"from {gap.gap_start} to {gap.gap_end} ({gap.gap_duration_hours:.2f} hours)"
+            )
 
         logger.info(f"Logged {len(gaps)} data gaps to log")
         return len(gaps)
@@ -420,7 +417,7 @@ class DataIntegrityChecker:
         check_candles: bool = True,
         check_trades: bool = True,
         check_funding: bool = True,
-        lookback_days: int = None
+        lookback_days: int = None,
     ) -> Dict[str, Dict]:
         """
         运行完整的数据完整性检查 - ClickHouse版本
@@ -437,7 +434,7 @@ class DataIntegrityChecker:
         """
         # 如果没有指定lookback_days，从配置中读取
         if lookback_days is None:
-            lookback_days = config.get('data_integrity.lookback_days', 7)
+            lookback_days = config.get("data_integrity.lookback_days", 7)
 
         end_time = datetime.utcnow()
         start_time = end_time - timedelta(days=lookback_days)
@@ -445,20 +442,13 @@ class DataIntegrityChecker:
         results = {}
 
         for symbol in symbols:
-            symbol_results = {
-                "candle_gaps": {},
-                "trade_gaps": [],
-                "funding_gaps": [],
-                "stats": {}
-            }
+            symbol_results = {"candle_gaps": {}, "trade_gaps": [], "funding_gaps": [], "stats": {}}
 
             try:
                 # 检查K线数据
                 if check_candles:
                     for interval in self.supported_intervals:
-                        gaps = self.check_candle_gaps(
-                            symbol, interval, start_time, end_time
-                        )
+                        gaps = self.check_candle_gaps(symbol, interval, start_time, end_time)
                         if gaps:
                             self.log_data_gaps(gaps)
                         symbol_results["candle_gaps"][interval] = len(gaps)

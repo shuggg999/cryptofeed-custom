@@ -4,8 +4,8 @@ ClickHouse连接和查询服务
 """
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import clickhouse_connect
 from clickhouse_connect.driver import Client
@@ -21,22 +21,24 @@ class ClickHouseService:
     def __init__(self):
         self.client: Optional[Client] = None
         self._connection_params = {
-            'host': settings.clickhouse_host,
-            'port': settings.clickhouse_port,
-            'username': settings.clickhouse_user,
-            'password': settings.clickhouse_password,
-            'database': settings.clickhouse_database,
+            "host": settings.clickhouse_host,
+            "port": settings.clickhouse_port,
+            "username": settings.clickhouse_user,
+            "password": settings.clickhouse_password,
+            "database": settings.clickhouse_database,
         }
 
     def connect(self) -> Client:
         """建立ClickHouse连接"""
         try:
             if self.client is None:
+                logger.info(f"Attempting to connect to ClickHouse at {self._connection_params}")
                 self.client = clickhouse_connect.get_client(**self._connection_params)
-                logger.info(f"Connected to ClickHouse at {settings.clickhouse_host}:{settings.clickhouse_port}")
+                logger.info(f"Connected to ClickHouse successfully")
             return self.client
         except Exception as e:
             logger.error(f"Failed to connect to ClickHouse: {e}")
+            logger.error(f"Connection params: {self._connection_params}")
             raise
 
     def disconnect(self):
@@ -81,7 +83,7 @@ class ClickHouseService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 1000,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """查询K线数据"""
         where_conditions = ["symbol = {symbol:String}", "interval = {interval:String}"]
@@ -117,11 +119,7 @@ class ClickHouseService:
         return self.query(sql, params)
 
     def get_candles_count(
-        self,
-        symbol: str,
-        interval: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
+        self, symbol: str, interval: str, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
     ) -> int:
         """查询K线数据总数"""
         where_conditions = ["symbol = {symbol:String}", "interval = {interval:String}"]
@@ -139,7 +137,7 @@ class ClickHouseService:
 
         sql = f"SELECT COUNT(*) as count FROM candles WHERE {where_clause}"
         result = self.query(sql, params)
-        return result[0]['count'] if result else 0
+        return result[0]["count"] if result else 0
 
     def get_candles_stats(self, symbol: str, interval: str) -> Dict[str, Any]:
         """查询K线统计信息"""
@@ -177,7 +175,7 @@ class ClickHouseService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 1000,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """查询交易数据"""
         where_conditions = ["symbol = {symbol:String}"]
@@ -211,10 +209,7 @@ class ClickHouseService:
         return self.query(sql, params)
 
     def get_trades_count(
-        self,
-        symbol: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
+        self, symbol: str, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
     ) -> int:
         """查询交易数据总数"""
         where_conditions = ["symbol = {symbol:String}"]
@@ -232,7 +227,7 @@ class ClickHouseService:
 
         sql = f"SELECT COUNT(*) as count FROM trades WHERE {where_clause}"
         result = self.query(sql, params)
-        return result[0]['count'] if result else 0
+        return result[0]["count"] if result else 0
 
     # Funding 相关查询方法
     def get_funding(
@@ -241,7 +236,7 @@ class ClickHouseService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 1000,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """查询资金费率数据"""
         where_conditions = ["symbol = {symbol:String}"]
@@ -273,10 +268,7 @@ class ClickHouseService:
         return self.query(sql, params)
 
     def get_funding_count(
-        self,
-        symbol: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
+        self, symbol: str, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
     ) -> int:
         """查询资金费率数据总数"""
         where_conditions = ["symbol = {symbol:String}"]
@@ -294,7 +286,7 @@ class ClickHouseService:
 
         sql = f"SELECT COUNT(*) as count FROM funding WHERE {where_clause}"
         result = self.query(sql, params)
-        return result[0]['count'] if result else 0
+        return result[0]["count"] if result else 0
 
 
 # 全局ClickHouse服务实例

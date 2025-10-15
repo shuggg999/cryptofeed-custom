@@ -53,8 +53,13 @@ services:
       AUTO_SCALING_ENABLED: "true"
       SYMBOL_CHECK_INTERVAL: 300
 
+      # API配置
+      API_MODE: "true"
+      API_HOST: 0.0.0.0
+      API_PORT: 8888
+
       # 监控配置
-      HEALTH_CHECK_PORT: 8080
+      HEALTH_CHECK_PORT: 8888
       METRICS_ENABLED: "true"
 
       # 日志级别
@@ -64,10 +69,11 @@ services:
       PYTHONPATH: /app
       PYTHONUNBUFFERED: 1
     ports:
-      - "8080:8080"
+      - "8888:8888"  # FreqTrade兼容的K线API端口
     volumes:
       - ./logs:/app/logs
       - ./config:/app/config
+      - ./cryptofeed_api:/app/cryptofeed_api  # 开发模式：挂载代码目录
     networks:
       - cryptofeed-network
     depends_on:

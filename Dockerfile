@@ -44,11 +44,11 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Expose ports
-EXPOSE 8080
+EXPOSE 8888
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8080/health')" || exit 1
+    CMD python -c "import requests; requests.get('http://localhost:8888/health')" || exit 1
 
-# Default command
-CMD ["python", "-m", "cryptofeed_api.monitor.main"]
+# Default command - Run FastAPI with data collection
+CMD ["python", "-m", "cryptofeed_api.app"]

@@ -1,21 +1,15 @@
 """
 FastAPI依赖注入
 """
+
 import logging
 from typing import Optional
-from fastapi import Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.database import get_db_session
+from fastapi import Depends, HTTPException, Query
+
 from ..core.config import config_manager
 
 logger = logging.getLogger(__name__)
-
-
-async def get_database() -> AsyncSession:
-    """获取数据库会话依赖"""
-    async with get_db_session() as session:
-        yield session
 
 
 def validate_symbol(symbol: str = Query(..., description="交易对符号，如 BTC-USDT-PERP")) -> str:
@@ -24,7 +18,7 @@ def validate_symbol(symbol: str = Query(..., description="交易对符号，如 
         raise HTTPException(status_code=400, detail="Symbol is required")
 
     # 简单的符号格式验证
-    if not symbol.replace('-', '').replace('_', '').isalnum():
+    if not symbol.replace("-", "").replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="Invalid symbol format")
 
     return symbol.upper()
@@ -35,10 +29,7 @@ def validate_exchange(exchange: str = Query("binance", description="交易所名
     supported_exchanges = ["binance", "bybit", "okx", "coinbase"]
 
     if exchange.lower() not in supported_exchanges:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported exchange. Supported: {supported_exchanges}"
-        )
+        raise HTTPException(status_code=400, detail=f"Unsupported exchange. Supported: {supported_exchanges}")
 
     return exchange.lower()
 
@@ -48,10 +39,7 @@ def validate_interval(interval: str = Query("1m", description="时间间隔")) -
     valid_intervals = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]
 
     if interval not in valid_intervals:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid interval. Valid intervals: {valid_intervals}"
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid interval. Valid intervals: {valid_intervals}")
 
     return interval
 
@@ -62,8 +50,7 @@ def validate_limit(limit: int = Query(100, ge=1, le=1000, description="返回数
 
 
 def get_pagination(
-    page: int = Query(1, ge=1, description="页码"),
-    size: int = Query(100, ge=1, le=1000, description="每页数量")
+    page: int = Query(1, ge=1, description="页码"), size: int = Query(100, ge=1, le=1000, description="每页数量")
 ) -> dict:
     """分页参数"""
     offset = (page - 1) * size
@@ -83,7 +70,7 @@ class CommonQueryParams:
         self,
         symbol: str = Depends(validate_symbol),
         exchange: str = Depends(validate_exchange),
-        limit: int = Depends(validate_limit)
+        limit: int = Depends(validate_limit),
     ):
         self.symbol = symbol
         self.exchange = exchange
@@ -97,14 +84,14 @@ class TimeRangeParams:
         self,
         start_time: Optional[str] = Query(None, description="开始时间 (ISO格式)"),
         end_time: Optional[str] = Query(None, description="结束时间 (ISO格式)"),
-        limit: int = Depends(validate_limit)
+        limit: int = Depends(validate_limit),
     ):
         from datetime import datetime
 
         # 验证并解析时间格式
         if start_time:
             try:
-                self.start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                self.start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid start_time format. Use ISO format.")
         else:
@@ -112,7 +99,7 @@ class TimeRangeParams:
 
         if end_time:
             try:
-                self.end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                self.end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid end_time format. Use ISO format.")
         else:
@@ -135,7 +122,7 @@ class CandleQueryParams(TimeRangeParams):
         interval: str = Depends(validate_interval),
         start_time: Optional[str] = Query(None, description="开始时间 (ISO格式)"),
         end_time: Optional[str] = Query(None, description="结束时间 (ISO格式)"),
-        limit: int = Depends(validate_limit)
+        limit: int = Depends(validate_limit),
     ):
         super().__init__(start_time, end_time, limit)
         self.symbol = symbol

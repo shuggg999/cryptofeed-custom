@@ -9,7 +9,7 @@ from typing import AsyncGenerator
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
-from cryptofeed_api.main import app
+from cryptofeed_api.app import app
 from cryptofeed_api.core.database import get_db_session
 from cryptofeed_api.models.database import Base
 

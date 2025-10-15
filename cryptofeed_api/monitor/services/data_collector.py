@@ -5,16 +5,12 @@
 """
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
 from cryptofeed import FeedHandler
-from cryptofeed.defines import (
-    TRADES, TICKER, FUNDING, L2_BOOK, LIQUIDATIONS, OPEN_INTEREST, INDEX, CANDLES
-)
+from cryptofeed.backends.clickhouse import CandlesClickHouse, FundingClickHouse, TickerClickHouse, TradeClickHouse
+from cryptofeed.defines import CANDLES, FUNDING, INDEX, L2_BOOK, LIQUIDATIONS, OPEN_INTEREST, TICKER, TRADES
 from cryptofeed.exchanges import BinanceFutures
-from cryptofeed.backends.clickhouse import (
-    TradeClickHouse, FundingClickHouse, CandlesClickHouse, TickerClickHouse
-)
 
 from ..config import config
 from .connection_pool import DynamicConnectionPool
@@ -55,11 +51,11 @@ class DataCollectionService:
 
                 # 创建ClickHouse配置
                 clickhouse_cfg = {
-                    'host': config.get('clickhouse.host', 'localhost'),
-                    'port': config.get('clickhouse.port', 8123),
-                    'user': config.get('clickhouse.user', 'default'),
-                    'password': config.get('clickhouse.password', 'password123'),
-                    'database': config.get('clickhouse.database', 'cryptofeed'),
+                    "host": config.get("clickhouse.host", "localhost"),
+                    "port": config.get("clickhouse.port", 8123),
+                    "user": config.get("clickhouse.user", "default"),
+                    "password": config.get("clickhouse.password", "password123"),
+                    "database": config.get("clickhouse.database", "cryptofeed"),
                 }
 
                 # 创建FeedHandler
@@ -70,9 +66,7 @@ class DataCollectionService:
                     BinanceFutures(
                         symbols=connection_symbols,
                         channels=[TRADES],
-                        callbacks={
-                            TRADES: [TradeClickHouse(**clickhouse_cfg)]
-                        }
+                        callbacks={TRADES: [TradeClickHouse(**clickhouse_cfg)]},
                     )
                 )
 
@@ -81,24 +75,20 @@ class DataCollectionService:
                     BinanceFutures(
                         symbols=connection_symbols,
                         channels=[FUNDING],
-                        callbacks={
-                            FUNDING: [FundingClickHouse(**clickhouse_cfg)]
-                        }
+                        callbacks={FUNDING: [FundingClickHouse(**clickhouse_cfg)]},
                     )
                 )
 
                 # 添加K线监控 - 分别为每个时间周期创建
-                intervals = ['1m', '5m', '30m', '4h', '1d']
+                intervals = ["1m", "5m", "30m", "4h", "1d"]
                 for interval in intervals:
-                    table_name = 'candles'  # 统一使用candles表
+                    table_name = "candles"  # 统一使用candles表
                     fh.add_feed(
                         BinanceFutures(
                             symbols=connection_symbols,
                             channels=[CANDLES],
-                            callbacks={
-                                CANDLES: [CandlesClickHouse(table=table_name, **clickhouse_cfg)]
-                            },
-                            candle_interval=interval
+                            callbacks={CANDLES: [CandlesClickHouse(table=table_name, **clickhouse_cfg)]},
+                            candle_interval=interval,
                         )
                     )
 
@@ -140,7 +130,7 @@ class DataCollectionService:
     def get_stats(self) -> Dict[str, Any]:
         """获取收集统计"""
         return {
-            'running': self.running,
-            'active_connections': len(self.feed_handlers),
-            'connection_pool_stats': self.connection_pool.get_stats()
+            "running": self.running,
+            "active_connections": len(self.feed_handlers),
+            "connection_pool_stats": self.connection_pool.get_stats(),
         }

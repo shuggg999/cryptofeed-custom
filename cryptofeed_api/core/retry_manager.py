@@ -1,19 +1,17 @@
 """
 错误处理和重试机制
 """
+
 import asyncio
 import logging
 import random
-from datetime import datetime, timedelta
-from typing import (
-    Callable, Dict, Any, Optional, Union, List, Tuple,
-    Type, Awaitable, TypeVar
-)
-from dataclasses import dataclass
-from functools import wraps
 import traceback
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from functools import wraps
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RetryConfig:
     """重试配置"""
+
     max_attempts: int = 3
     base_delay: float = 1.0
     max_delay: float = 60.0
@@ -32,6 +31,7 @@ class RetryConfig:
 @dataclass
 class RetryResult:
     """重试结果"""
+
     success: bool
     result: Any = None
     attempts: int = 0
@@ -46,16 +46,19 @@ class RetryResult:
 
 class RetryableError(Exception):
     """可重试的错误基类"""
+
     pass
 
 
 class NonRetryableError(Exception):
     """不可重试的错误基类"""
+
     pass
 
 
 class CircuitBreakerError(Exception):
     """熔断器错误"""
+
     pass
 
 
@@ -66,7 +69,7 @@ class CircuitBreaker:
         self,
         failure_threshold: int = 5,
         recovery_timeout: float = 60.0,
-        expected_exception: Type[Exception] = Exception
+        expected_exception: Type[Exception] = Exception,
     ):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
@@ -179,17 +182,14 @@ class RetryManager:
             return True
 
         # 网络相关错误通常可重试
-        network_errors = (
-            ConnectionError,
-            TimeoutError,
-            OSError
-        )
+        network_errors = (ConnectionError, TimeoutError, OSError)
         if isinstance(exception, network_errors):
             return True
 
         # HTTP相关错误（需要导入后才能检查）
         try:
             import aiohttp
+
             if isinstance(exception, (aiohttp.ClientError, aiohttp.ServerTimeoutError)):
                 return True
         except ImportError:
@@ -197,7 +197,9 @@ class RetryManager:
 
         # 数据库连接错误通常可重试
         try:
-            from sqlalchemy.exc import DisconnectionError, TimeoutError as SQLTimeoutError
+            from sqlalchemy.exc import DisconnectionError
+            from sqlalchemy.exc import TimeoutError as SQLTimeoutError
+
             if isinstance(exception, (DisconnectionError, SQLTimeoutError)):
                 return True
         except ImportError:
@@ -211,7 +213,7 @@ class RetryManager:
         *args,
         config: Optional[RetryConfig] = None,
         circuit_breaker_name: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> RetryResult:
         """异步函数重试"""
         config = config or RetryConfig()
@@ -242,9 +244,7 @@ class RetryManager:
                 result.last_error = e
                 result.error_history.append(e)
 
-                logger.warning(
-                    f"Attempt {attempt}/{config.max_attempts} failed for {func.__name__}: {e}"
-                )
+                logger.warning(f"Attempt {attempt}/{config.max_attempts} failed for {func.__name__}: {e}")
 
                 # 检查是否应该重试
                 if not self._should_retry(e, attempt, config.max_attempts):
@@ -260,14 +260,14 @@ class RetryManager:
         result.total_duration = asyncio.get_event_loop().time() - start_time
 
         # 记录统计信息
-        func_name = f"{func.__module__}.{func.__name__}" if hasattr(func, '__module__') else str(func)
+        func_name = f"{func.__module__}.{func.__name__}" if hasattr(func, "__module__") else str(func)
         if func_name not in self.retry_stats:
             self.retry_stats[func_name] = {
                 "total_calls": 0,
                 "success_count": 0,
                 "failure_count": 0,
                 "total_attempts": 0,
-                "avg_attempts": 0.0
+                "avg_attempts": 0.0,
             }
 
         stats = self.retry_stats[func_name]
@@ -283,13 +283,7 @@ class RetryManager:
 
         return result
 
-    def retry_sync(
-        self,
-        func: Callable[..., T],
-        *args,
-        config: Optional[RetryConfig] = None,
-        **kwargs
-    ) -> RetryResult:
+    def retry_sync(self, func: Callable[..., T], *args, config: Optional[RetryConfig] = None, **kwargs) -> RetryResult:
         """同步函数重试（简化版）"""
         config = config or RetryConfig()
         start_time = datetime.now()
@@ -309,9 +303,7 @@ class RetryManager:
                 result.last_error = e
                 result.error_history.append(e)
 
-                logger.warning(
-                    f"Attempt {attempt}/{config.max_attempts} failed for {func.__name__}: {e}"
-                )
+                logger.warning(f"Attempt {attempt}/{config.max_attempts} failed for {func.__name__}: {e}")
 
                 if not self._should_retry(e, attempt, config.max_attempts):
                     break
@@ -319,6 +311,7 @@ class RetryManager:
                 if attempt < config.max_attempts:
                     delay = self._calculate_delay(attempt, config)
                     import time
+
                     time.sleep(delay)
 
         result.total_duration = (datetime.now() - start_time).total_seconds()
@@ -332,10 +325,10 @@ class RetryManager:
                 name: {
                     "state": cb.state,
                     "failure_count": cb.failure_count,
-                    "last_failure_time": cb.last_failure_time.isoformat() if cb.last_failure_time else None
+                    "last_failure_time": cb.last_failure_time.isoformat() if cb.last_failure_time else None,
                 }
                 for name, cb in self.circuit_breakers.items()
-            }
+            },
         }
 
 
@@ -343,21 +336,16 @@ class RetryManager:
 retry_manager = RetryManager()
 
 
-def with_retry(
-    config: Optional[RetryConfig] = None,
-    circuit_breaker_name: Optional[str] = None
-):
+def with_retry(config: Optional[RetryConfig] = None, circuit_breaker_name: Optional[str] = None):
     """重试装饰器"""
 
     def decorator(func: Callable):
         if asyncio.iscoroutinefunction(func):
+
             @wraps(func)
             async def async_wrapper(*args, **kwargs):
                 result = await retry_manager.retry_async(
-                    func, *args,
-                    config=config,
-                    circuit_breaker_name=circuit_breaker_name,
-                    **kwargs
+                    func, *args, config=config, circuit_breaker_name=circuit_breaker_name, **kwargs
                 )
                 if not result.success:
                     raise result.last_error
@@ -365,6 +353,7 @@ def with_retry(
 
             return async_wrapper
         else:
+
             @wraps(func)
             def sync_wrapper(*args, **kwargs):
                 result = retry_manager.retry_sync(func, *args, config=config, **kwargs)
@@ -378,28 +367,12 @@ def with_retry(
 
 
 # 预定义的重试配置
-DATABASE_RETRY_CONFIG = RetryConfig(
-    max_attempts=3,
-    base_delay=0.5,
-    max_delay=5.0,
-    backoff_factor=2.0,
-    jitter=True
-)
+DATABASE_RETRY_CONFIG = RetryConfig(max_attempts=3, base_delay=0.5, max_delay=5.0, backoff_factor=2.0, jitter=True)
 
-API_RETRY_CONFIG = RetryConfig(
-    max_attempts=3,
-    base_delay=1.0,
-    max_delay=30.0,
-    backoff_factor=2.0,
-    jitter=True
-)
+API_RETRY_CONFIG = RetryConfig(max_attempts=3, base_delay=1.0, max_delay=30.0, backoff_factor=2.0, jitter=True)
 
 EXTERNAL_SERVICE_RETRY_CONFIG = RetryConfig(
-    max_attempts=5,
-    base_delay=2.0,
-    max_delay=60.0,
-    backoff_factor=1.5,
-    jitter=True
+    max_attempts=5, base_delay=2.0, max_delay=60.0, backoff_factor=1.5, jitter=True
 )
 
 
@@ -417,19 +390,14 @@ class ErrorHandler:
         self.error_history: List[Dict[str, Any]] = []
         self.max_history = 1000
 
-    def handle_error(
-        self,
-        error: Exception,
-        context: Dict[str, Any] = None,
-        notify: bool = False
-    ) -> Dict[str, Any]:
+    def handle_error(self, error: Exception, context: Dict[str, Any] = None, notify: bool = False) -> Dict[str, Any]:
         """处理错误"""
         error_info = {
             "timestamp": datetime.now().isoformat(),
             "error_type": type(error).__name__,
             "error_message": str(error),
             "traceback": traceback.format_exc(),
-            "context": context or {}
+            "context": context or {},
         }
 
         # 记录错误历史
@@ -442,11 +410,7 @@ class ErrorHandler:
         self.error_counts[error_key] = self.error_counts.get(error_key, 0) + 1
 
         # 记录日志
-        logger.error(
-            f"Error handled: {type(error).__name__}: {error}",
-            extra={"context": context},
-            exc_info=True
-        )
+        logger.error(f"Error handled: {type(error).__name__}: {error}", extra={"context": context}, exc_info=True)
 
         # 如果需要通知（例如发送告警）
         if notify:
@@ -462,17 +426,13 @@ class ErrorHandler:
     def get_error_stats(self) -> Dict[str, Any]:
         """获取错误统计"""
         total_errors = sum(self.error_counts.values())
-        top_errors = sorted(
-            self.error_counts.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )[:10]
+        top_errors = sorted(self.error_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
         return {
             "total_errors": total_errors,
             "unique_errors": len(self.error_counts),
             "top_errors": top_errors,
-            "recent_errors": self.error_history[-10:] if self.error_history else []
+            "recent_errors": self.error_history[-10:] if self.error_history else [],
         }
 
     def clear_stats(self):
@@ -492,7 +452,7 @@ async def safe_execute(
     config: Optional[RetryConfig] = None,
     circuit_breaker_name: Optional[str] = None,
     handle_errors: bool = True,
-    **kwargs
+    **kwargs,
 ) -> Tuple[bool, Any, Optional[Exception]]:
     """
     安全执行函数，集成重试和错误处理
@@ -503,10 +463,7 @@ async def safe_execute(
     try:
         if asyncio.iscoroutinefunction(func):
             result = await retry_manager.retry_async(
-                func, *args,
-                config=config,
-                circuit_breaker_name=circuit_breaker_name,
-                **kwargs
+                func, *args, config=config, circuit_breaker_name=circuit_breaker_name, **kwargs
             )
         else:
             result = retry_manager.retry_sync(func, *args, config=config, **kwargs)
@@ -515,18 +472,15 @@ async def safe_execute(
             return True, result.result, None
         else:
             if handle_errors:
-                error_handler.handle_error(result.last_error, {
-                    "function": func.__name__,
-                    "attempts": result.attempts,
-                    "duration": result.total_duration
-                })
+                error_handler.handle_error(
+                    result.last_error,
+                    {"function": func.__name__, "attempts": result.attempts, "duration": result.total_duration},
+                )
             return False, None, result.last_error
 
     except Exception as e:
         if handle_errors:
-            error_handler.handle_error(e, {
-                "function": func.__name__,
-                "args": str(args)[:200],
-                "kwargs": str(kwargs)[:200]
-            })
+            error_handler.handle_error(
+                e, {"function": func.__name__, "args": str(args)[:200], "kwargs": str(kwargs)[:200]}
+            )
         return False, None, e

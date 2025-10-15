@@ -1,9 +1,10 @@
 """
 数据标准化服务 - 统一不同数据源的格式
 """
+
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -14,16 +15,15 @@ class ExchangeNormalizer:
     # 交易所名称映射表
     EXCHANGE_MAPPING = {
         # Binance 相关
-        'binance': 'BINANCE_FUTURES',
-        'BINANCE': 'BINANCE_FUTURES',
-        'BINANCE_FUTURES': 'BINANCE_FUTURES',
-        'binance_futures': 'BINANCE_FUTURES',
-
+        "binance": "BINANCE_FUTURES",
+        "BINANCE": "BINANCE_FUTURES",
+        "BINANCE_FUTURES": "BINANCE_FUTURES",
+        "binance_futures": "BINANCE_FUTURES",
         # 其他交易所可以在这里添加
-        'okx': 'OKX',
-        'okex': 'OKX',
-        'bybit': 'BYBIT',
-        'huobi': 'HUOBI',
+        "okx": "OKX",
+        "okex": "OKX",
+        "bybit": "BYBIT",
+        "huobi": "HUOBI",
     }
 
     @classmethod
@@ -38,7 +38,7 @@ class ExchangeNormalizer:
             标准化后的交易所名称
         """
         if not exchange:
-            return 'UNKNOWN'
+            return "UNKNOWN"
 
         normalized = cls.EXCHANGE_MAPPING.get(exchange.strip(), exchange.upper())
         return normalized
@@ -65,26 +65,24 @@ class DataNormalizer:
         normalized_data = data.copy()
 
         # 1. 统一交易所名称
-        if 'exchange' in normalized_data:
-            normalized_data['exchange'] = self.exchange_normalizer.normalize_exchange_name(
-                normalized_data['exchange']
-            )
+        if "exchange" in normalized_data:
+            normalized_data["exchange"] = self.exchange_normalizer.normalize_exchange_name(normalized_data["exchange"])
 
         # 2. 统一符号格式 (如果需要)
-        if 'symbol' in normalized_data:
-            normalized_data['symbol'] = self._normalize_symbol(normalized_data['symbol'])
+        if "symbol" in normalized_data:
+            normalized_data["symbol"] = self._normalize_symbol(normalized_data["symbol"])
 
         # 3. 统一时间间隔格式 (如果需要)
-        if 'interval' in normalized_data:
-            normalized_data['interval'] = self._normalize_interval(normalized_data['interval'])
+        if "interval" in normalized_data:
+            normalized_data["interval"] = self._normalize_interval(normalized_data["interval"])
 
         # 4. 统一时间戳格式（转换为北京时间）
-        for timestamp_field in ['timestamp', 'receipt_timestamp']:
+        for timestamp_field in ["timestamp", "receipt_timestamp"]:
             if timestamp_field in normalized_data:
                 normalized_data[timestamp_field] = self._normalize_timestamp(normalized_data[timestamp_field])
 
         # 5. 统一数值格式
-        for field in ['open', 'high', 'low', 'close', 'volume']:
+        for field in ["open", "high", "low", "close", "volume"]:
             if field in normalized_data and normalized_data[field] is not None:
                 try:
                     normalized_data[field] = float(normalized_data[field])
@@ -130,12 +128,12 @@ class DataNormalizer:
 
         # 统一间隔格式
         interval_mapping = {
-            '1min': '1m',
-            '5min': '5m',
-            '30min': '30m',
-            '1hour': '1h',
-            '4hour': '4h',
-            '1day': '1d',
+            "1min": "1m",
+            "5min": "5m",
+            "30min": "30m",
+            "1hour": "1h",
+            "4hour": "4h",
+            "1day": "1d",
         }
 
         return interval_mapping.get(interval, interval)
@@ -177,7 +175,7 @@ class DataNormalizer:
 data_normalizer = DataNormalizer()
 
 
-def normalize_data(data: Dict[str, Any], data_type: str = 'candle') -> Dict[str, Any]:
+def normalize_data(data: Dict[str, Any], data_type: str = "candle") -> Dict[str, Any]:
     """
     标准化数据的便捷函数
 
@@ -188,7 +186,7 @@ def normalize_data(data: Dict[str, Any], data_type: str = 'candle') -> Dict[str,
     Returns:
         标准化后的数据
     """
-    if data_type == 'candle':
+    if data_type == "candle":
         return data_normalizer.normalize_candle_data(data)
 
     # 未来可以添加其他数据类型的标准化

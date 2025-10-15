@@ -100,246 +100,284 @@ cryptofeed/                     # 项目根目录
 - 如发现根目录有临时文件，立即移动到正确位置
 - 定期清理不需要的临时文件
 
-## Project Overview
-Cryptofeed is a cryptocurrency exchange data feed handler that normalizes and standardizes data from multiple exchanges. It handles websockets, REST endpoints, and provides real-time data for trades, order books, tickers, funding, and other market data.
+---
 
-**Key Stats:**
-- 40+ supported exchanges (Binance, Coinbase, Kraken, BitMEX, Bybit, OKX, etc.)
-- Python 3.9+ required (supports 3.9, 3.10, 3.11, 3.12)
-- AsyncIO-based architecture with uvloop optimization
-- Cython-optimized core types for performance-critical paths
-- Extensive backend support (Redis, MongoDB, PostgreSQL, InfluxDB, Kafka, RabbitMQ, etc.)
-- Current version: 2.4.1 (Feb 2025)
+## 📝 代码规范
 
-## Architecture & Core Concepts
+### 命名规范
 
-### Main Components
-- **FeedHandler**: Central orchestrator that manages multiple exchange feeds
-- **Exchange Classes**: Individual exchange implementations in `/cryptofeed/exchanges/`
-- **Channels**: Data types (L1_BOOK, L2_BOOK, L3_BOOK, TRADES, TICKER, FUNDING, etc.)
-- **Callbacks**: User-defined functions for handling data events
-- **Backends**: Storage/output destinations (Redis, MongoDB, etc.)
-- **Symbols**: Normalized instrument representation across exchanges
+**文件和目录命名：**
+- ✅ 使用小写字母+下划线：`data_collector.py`、`config_manager.py`
+- ✅ 包目录必须有`__init__.py`
+- ❌ 禁止使用驼峰命名：`DataCollector.py`
+- ❌ 禁止项目内出现多个`main.py`（只允许根目录有一个）
 
-### Key Architecture Patterns
-1. **AsyncIO Event Loop**: All exchanges run asynchronously
-2. **Websocket-First**: Prefers websockets over REST polling when available
-3. **Normalization**: All data is normalized to standard formats across exchanges
-4. **Type Safety**: Uses Cython for performance-critical types with runtime assertions
-5. **Modular Backends**: Pluggable storage/output systems
+**变量和函数命名：**
+- ✅ 变量：小写+下划线：`user_name`、`total_count`
+- ✅ 函数：小写+下划线：`get_data()`、`process_trades()`
+- ✅ 私有方法：单下划线开头：`_internal_method()`
+- ✅ 常量：全大写+下划线：`MAX_RETRY_COUNT`、`DEFAULT_TIMEOUT`
 
-### Core Data Flow
+**类命名：**
+- ✅ 类名：驼峰命名：`DataCollector`、`SymbolManager`
+- ✅ 私有类：单下划线开头：`_InternalHelper`
+
+### 目录结构规范
+
+**cryptofeed_api/ 项目结构：**
 ```
-Exchange WebSocket → Exchange Class → Normalization → Callbacks/Backends
-```
-
-## Development Commands
-
-### Setup & Installation
-```bash
-# Development install with Cython compilation
-python setup.py develop
-
-# Install with all optional dependencies
-pip install cryptofeed[all]
-
-# Install specific backend dependencies
-pip install cryptofeed[redis,mongo,postgres]
-```
-
-### Testing
-```bash
-# Run all tests
-pytest tests/
-
-# Run specific test categories
-pytest tests/unit/
-pytest tests/integration/
-
-# Test with coverage
-python setup.py test
-```
-
-### Code Quality
-```bash
-# Linting (configured in .flake8, ignores E501,F405,F403)
-flake8
-
-# Import sorting (configured in pyproject.toml, line length 130)
-isort --jobs 8 ./cryptofeed
-
-# Coverage testing (configured in .coveragerc)
-python setup.py test
-
-# Manual Cython compilation for types
-python setup.py build_ext --inplace
-
-# Check Cython compilation with assertions
-# By default CYTHON_WITHOUT_ASSERTIONS is defined in setup.py
-# Comment out line 40 in setup.py to enable runtime type assertions
+cryptofeed_api/
+├── __init__.py                  # 包初始化
+├── app.py                       # FastAPI应用入口（不叫main.py）
+├── api/                         # REST API模块
+│   ├── __init__.py
+│   ├── dependencies.py
+│   └── v1/
+│       ├── __init__.py
+│       ├── health.py
+│       └── monitoring.py
+├── monitor/                     # 数据监控模块
+│   ├── __init__.py
+│   ├── collector.py             # 数据采集器（不叫main.py）
+│   ├── config.py
+│   └── backends/
+│       ├── __init__.py          # 必须有！
+│       └── clickhouse.py
+├── core/                        # 核心配置
+│   ├── __init__.py
+│   ├── config.py
+│   └── clickhouse.py
+├── services/                    # 业务服务
+│   ├── __init__.py
+│   ├── data_backfill.py
+│   └── data_integrity.py
+├── models/                      # 数据模型
+│   ├── __init__.py
+│   └── schemas.py
+└── utils/                       # 工具函数
+    ├── __init__.py
+    └── helpers.py
 ```
 
-### Build & Distribution
-```bash
-# Build wheels for multiple Python versions (uses build-wheels.sh)
-./build-wheels.sh
+### 导入顺序规范
 
-# Simple wheel building
-./wheels.sh
-
-# Build Cython extensions in-place
-python setup.py build_ext --inplace
-```
-
-## Cryptofeed-Specific Patterns & Conventions
-
-### Exchange Implementation
-- All exchanges inherit from `Exchange` base class in `/cryptofeed/exchange.py`
-- Must implement: `_connect()`, `_book_snapshot()`, `_reset()`
-- WebSocket message handlers use async pattern: `async def _handler(self, msg, timestamp)`
-- Symbol normalization via `symbol_mapping` dictionaries
-
-### Data Type Standards
-- **Decimal**: All prices/amounts use `decimal.Decimal` for precision
-- **Timestamps**: Float timestamps in Unix epoch format
-- **Symbols**: Internal format like 'BTC-USD', normalized across exchanges
-- **Sides**: Standardized to 'buy'/'sell' and 'bid'/'ask'
-
-### Configuration Patterns
-- Config via YAML files (see `config.yaml` example)
-- Per-exchange API credentials support (key_id, key_secret, key_passphrase)
-- Global settings: logging, uvloop, multiprocessing, ignore_invalid_instruments
-- Backend-specific configuration available for each storage system
-- Authentication supports master API keys for some exchanges (e.g., Gemini account_name)
-
-### Callback Signatures
+**按照以下顺序组织导入（PEP 8标准）：**
 ```python
-# Standard callback patterns
-async def trade_callback(trade, receipt_timestamp):
-    # trade object contains: symbol, side, amount, price, timestamp, etc.
+# 1. 标准库导入
+import os
+import sys
+from datetime import datetime
+from typing import Dict, List, Optional
 
-async def book_callback(book, receipt_timestamp):
-    # book.book contains SortedDict of bids/asks
-    # book.delta contains incremental updates
+# 2. 第三方库导入
+import asyncio
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+
+# 3. 本地应用导入
+from cryptofeed_api.core import config_manager
+from cryptofeed_api.services.data_backfill import DataBackfillService
 ```
 
-## Critical Dependencies & Setup
+### 模块入口规范
 
-### Core Dependencies
-- **websockets**: WebSocket client library (v14.1+)
-- **aiohttp**: Async HTTP client for REST endpoints (v3.11.6+)
-- **pyyaml**: Configuration file parsing
-- **yapic.json**: High-performance JSON parsing (v1.6.3+)
-- **order_book**: Specialized order book data structures (v0.6.0+)
-- **Cython**: Performance-critical type system
-- **requests**: HTTP client for synchronous operations (v2.18.4+)
-- **aiofile**: Async file operations (v2.0.0+)
-
-### Platform-Specific
-- **uvloop**: Unix-only event loop (auto-detected)
-- **aiodns**: Faster DNS resolution
-
-### Exchange-Specific Requirements
-- Some exchanges require API credentials even for public data
-- Rate limiting considerations vary by exchange
-- Checksum validation available for some exchanges (OKX, Kraken, etc.)
-
-## Common Development Patterns
-
-### Adding New Exchange
-1. Create new file in `/cryptofeed/exchanges/`
-2. Inherit from `Exchange` base class
-3. Implement required methods and message handlers
-4. Add exchange to `/cryptofeed/exchanges/__init__.py`
-5. Add constants to `/cryptofeed/defines.py`
-6. Create example in `/examples/`
-
-### Testing Exchange Integration
-- Use sample data in `/sample_data/` directory
-- Integration tests in `/tests/integration/`
-- Unit tests focus on normalization logic
-
-### Performance Considerations
-- Order book updates can be high-frequency (1000s/second)
-- Use Cython types for performance-critical paths
-- Callbacks should be lightweight (avoid blocking operations)
-- Consider multiprocessing for backends under high load
-
-## File Structure Deep Dive
-
-### `/cryptofeed/` (Main Package)
-- `feedhandler.py`: Central FeedHandler orchestrator
-- `exchange.py`: Base exchange implementation
-- `defines.py`: All string constants and data structure docs
-- `types.pyx`: Cython-optimized data types
-- `connection.py`: WebSocket connection management
-- `symbols.py`: Symbol normalization utilities
-
-### `/cryptofeed/exchanges/` (Exchange Implementations)
-- Individual exchange files (e.g., `binance.py`, `coinbase.py`)
-- `/mixins/`: Shared functionality across exchanges
-
-### `/cryptofeed/backends/` (Output Destinations)
-- Redis, MongoDB, PostgreSQL, InfluxDB, etc.
-- Each backend handles different data types appropriately
-
-### `/examples/` (Usage Examples)
-- `demo.py`: Comprehensive multi-exchange example
-- Backend-specific examples (Redis, Arctic, etc.)
-- Authentication examples for private channels
-
-## Debugging & Troubleshooting
-
-### Common Issues
-- **Symbol Mismatches**: Check exchange-specific symbol formats
-- **Rate Limits**: Some exchanges have strict rate limits
-- **SSL/TLS**: Some exchanges require specific SSL configurations
-- **Timezone Handling**: All timestamps should be UTC
-
-### Logging Configuration
-```python
-config = {
-    'log': {
-        'filename': 'cryptofeed.log',
-        'level': 'DEBUG',  # DEBUG, INFO, WARNING, ERROR
-        'disabled': False
-    }
-}
+**只允许根目录有一个main.py作为统一入口：**
+```
+cryptofeed/                      # 项目根目录
+├── main.py                      # ✅ 唯一的main.py（统一启动入口）
+├── cryptofeed_api/
+│   ├── app.py                   # ✅ FastAPI应用
+│   └── monitor/
+│       └── collector.py         # ✅ 数据采集器
 ```
 
-### Debug Tools
-- `/tools/` directory contains debugging utilities
-- `websockets_test.py`: Direct WebSocket testing
-- `book_test.py`: Order book validation
-- Raw data collection available for debugging
+### 代码复杂度规范
 
-## Testing Philosophy
-- **Unit Tests**: Focus on data normalization and utility functions
-- **Integration Tests**: Test live exchange connections (when possible)
-- **Mock Data**: Use `/sample_data/` for consistent testing
-- **Continuous Integration**: GitHub Actions test on Python 3.10, 3.11, 3.12
+- 每行最多120字符
+- 单个函数≤50行，参数≤5个，嵌套≤4层
+- 单个类≤300行，方法≤20个，公共方法≤10个
+- 单个文件≤500行
+- 超过限制必须拆分
 
-## Performance Notes
-- Cryptofeed can handle thousands of updates per second
-- Memory usage scales with number of active order book subscriptions
-- Consider using `backend_multiprocessing: True` for high-throughput scenarios
-- UV loop provides significant performance benefits on Unix systems
+### 格式规范
 
-## Security Considerations
-- API credentials stored in config files (never commit these!)
-- Some authenticated channels require specific permissions
-- WebSocket connections may need proxy support in corporate environments
-- Rate limiting is exchange-specific and should be respected
+- 使用4空格缩进（禁止Tab）
+- 类定义前空2行，方法间空1行
+- 优先使用双引号
+- 长行使用括号自然折行
+- 文件末尾保留1个空行
+
+### 异常和资源规范
+
+- 捕获具体异常，避免裸`except Exception`
+- 异常重抛时使用`raise ... from e`保持异常链
+- 必须使用上下文管理器（`with`）管理资源
+- 避免魔法数字，使用有意义的常量
+
+### TODO注释格式
+
+- `# TODO(用户名): 具体内容 - 优先级 - 日期`
+- `# FIXME:` 需要修复的问题
+- `# NOTE:` 重要说明
+- `# HACK:` 临时方案
 
 ---
 
-**Last Updated**: Sep 2025 - Based on cryptofeed v2.4.1 codebase analysis
+## 📚 注释规范
 
-**Recent Notable Changes (v2.4.1):**
-- Coinbase transitioned from Pro to Advanced Trade API
-- Bybit spot support added
-- Bybit migrated to API V5 for public streams
-- WebSocket library updated to v14.1+ compatibility
-- Support for JSON payloads in HTTPSync connections
+### 注释语言规范
 
-This guide focuses on the non-obvious, cryptofeed-specific knowledge that will help you be productive quickly when working with this codebase.
+**统一使用中文注释：**
+```python
+# ✅ 正确示例
+def get_user_data(user_id: int) -> Dict[str, Any]:
+    """获取用户数据
+
+    Args:
+        user_id: 用户ID
+
+    Returns:
+        包含用户信息的字典
+    """
+    # 从数据库查询用户
+    user = db.query(user_id)
+    return user
+
+# ❌ 错误示例
+def get_user_data(user_id: int) -> Dict[str, Any]:
+    """Get user data"""  # 不要用英文注释
+    # Query user from database
+    user = db.query(user_id)
+    return user
+```
+
+**注意：代码本身保持英文命名，只有注释用中文。**
+
+### Docstring规范（Google风格）
+
+**函数文档字符串：**
+```python
+def calculate_statistics(data: List[float], interval: str) -> Dict[str, float]:
+    """计算统计数据
+
+    对给定的数据列表计算各种统计指标，包括均值、中位数和标准差。
+
+    Args:
+        data: 数值列表，用于计算统计指标
+        interval: 时间间隔，支持 '1m', '5m', '1h' 等
+
+    Returns:
+        包含以下键的字典：
+        - mean: 平均值
+        - median: 中位数
+        - std: 标准差
+
+    Raises:
+        ValueError: 当data为空列表时
+
+    Example:
+        >>> data = [1.0, 2.0, 3.0, 4.0, 5.0]
+        >>> stats = calculate_statistics(data, '1m')
+        >>> print(stats['mean'])
+        3.0
+    """
+    if not data:
+        raise ValueError("数据列表不能为空")
+
+    return {
+        'mean': sum(data) / len(data),
+        'median': sorted(data)[len(data) // 2],
+        'std': calculate_std(data)
+    }
+```
+
+**类文档字符串：**
+```python
+class DataCollector:
+    """数据采集器
+
+    负责从交易所WebSocket连接采集实时数据，并存储到数据库。
+    支持多交易对并发采集，具有自动重连和错误恢复机制。
+
+    Attributes:
+        symbols: 监控的交易对列表
+        feed_handler: Cryptofeed的FeedHandler实例
+        is_running: 采集器运行状态标志
+
+    Example:
+        >>> collector = DataCollector()
+        >>> await collector.start()
+        >>> print(collector.is_running)
+        True
+    """
+
+    def __init__(self):
+        """初始化数据采集器"""
+        self.symbols = []
+        self.feed_handler = None
+        self.is_running = False
+```
+
+### 类型提示规范
+
+**强制使用类型提示：**
+```python
+from typing import Dict, List, Optional, Any, Union
+from datetime import datetime
+
+# ✅ 正确：有完整的类型提示
+async def get_candles(
+    symbol: str,
+    interval: str,
+    start_time: datetime,
+    end_time: Optional[datetime] = None,
+    limit: int = 1000
+) -> List[Dict[str, Any]]:
+    """获取K线数据"""
+    pass
+
+# ❌ 错误：缺少类型提示
+async def get_candles(symbol, interval, start_time, end_time=None, limit=1000):
+    """获取K线数据"""
+    pass
+```
+
+**常用类型提示：**
+```python
+from typing import Dict, List, Optional, Any, Union, Tuple
+
+# 基础类型
+name: str = "BTC-USDT"
+count: int = 100
+price: float = 50000.0
+is_active: bool = True
+
+# 容器类型
+symbols: List[str] = ["BTC-USDT", "ETH-USDT"]
+config: Dict[str, Any] = {"host": "localhost", "port": 8123}
+result: Optional[str] = None  # 可能是None
+
+# 函数类型提示
+def process(data: Dict[str, Any]) -> Tuple[int, str]:
+    return (1, "success")
+
+# 类型别名（复杂类型）
+from typing import TypeAlias
+SymbolConfig: TypeAlias = Dict[str, Union[str, int, bool]]
+```
+
+### 行内注释规范
+
+**简洁清晰，不要废话：**
+```python
+# ✅ 好的注释：解释为什么
+delay = 0.05  # 50ms间隔，避免触发Binance API限流（1200次/分钟）
+
+# ❌ 差的注释：重复代码
+delay = 0.05  # 设置延迟为0.05秒
+```
+
+---
+
+**最后更新**：2025年1月
+**适用范围**：cryptofeed_api/ 项目

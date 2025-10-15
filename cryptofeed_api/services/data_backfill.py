@@ -2,15 +2,16 @@
 历史数据补充服务 - ClickHouse版本
 自动补充ClickHouse数据库中缺失的历史数据
 """
+
 import asyncio
 import logging
-import requests
 import time
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
 
 import clickhouse_connect
+import requests
 
 from cryptofeed_api.monitor.config import config
 from cryptofeed_api.services.data_normalizer import normalize_data
@@ -22,13 +23,14 @@ logger.setLevel(logging.DEBUG)
 @dataclass
 class BackfillTask:
     """数据补充任务"""
+
     gap_log_id: int
     symbol: str
     data_type: str  # 'candles', 'trades', 'funding'
     interval: Optional[str]  # 仅用于candles
     start_time: datetime
     end_time: datetime
-    status: str = 'pending'
+    status: str = "pending"
     error_message: Optional[str] = None
     records_filled: int = 0
 
@@ -36,6 +38,7 @@ class BackfillTask:
 @dataclass
 class BackfillResult:
     """数据补充结果"""
+
     task: BackfillTask
     success: bool
     records_added: int
@@ -52,13 +55,14 @@ class DataBackfillService:
 
         # ClickHouse连接配置 - 从环境变量和配置文件读取
         import os
-        clickhouse_config = config.get('clickhouse', {})
+
+        clickhouse_config = config.get("clickhouse", {})
         self.ch_config = {
-            'host': os.getenv('CLICKHOUSE_HOST', clickhouse_config.get('host', 'localhost')),
-            'port': int(os.getenv('CLICKHOUSE_PORT', clickhouse_config.get('port', 8123))),
-            'user': os.getenv('CLICKHOUSE_USER', clickhouse_config.get('user', 'default')),
-            'password': os.getenv('CLICKHOUSE_PASSWORD', clickhouse_config.get('password', 'password123')),
-            'database': os.getenv('CLICKHOUSE_DATABASE', clickhouse_config.get('database', 'cryptofeed'))
+            "host": os.getenv("CLICKHOUSE_HOST", clickhouse_config.get("host", "localhost")),
+            "port": int(os.getenv("CLICKHOUSE_PORT", clickhouse_config.get("port", 8123))),
+            "user": os.getenv("CLICKHOUSE_USER", clickhouse_config.get("user", "default")),
+            "password": os.getenv("CLICKHOUSE_PASSWORD", clickhouse_config.get("password", "password123")),
+            "database": os.getenv("CLICKHOUSE_DATABASE", clickhouse_config.get("database", "cryptofeed")),
         }
 
     def detect_data_gaps(self, symbols: List[str], lookback_days: int = None) -> List[BackfillTask]:
@@ -76,19 +80,19 @@ class DataBackfillService:
         tasks = []
         now = datetime.utcnow()
 
-        intervals = ['1d', '4h', '30m', '5m', '1m']
+        intervals = ["1d", "4h", "30m", "5m", "1m"]
 
         # 从统一的数据保留策略配置中获取每个时间间隔的回填天数
-        retention_config = config.get('data_retention', {})
-        candles_retention = retention_config.get('candles', {})
+        retention_config = config.get("data_retention", {})
+        candles_retention = retention_config.get("candles", {})
 
         # 如果没有配置，使用默认值（与data_retention保持一致）
         lookback_by_interval = candles_retention or {
-            '1d': 1095,    # 3年
-            '4h': 730,     # 2年
-            '30m': 365,    # 1年
-            '5m': 90,      # 90天
-            '1m': 30       # 30天
+            "1d": 1095,  # 3年
+            "4h": 730,  # 2年
+            "30m": 365,  # 1年
+            "5m": 90,  # 90天
+            "1m": 30,  # 30天
         }
 
         logger.info(f"📋 使用统一数据保留策略进行回填: {lookback_by_interval}")
@@ -107,7 +111,7 @@ class DataBackfillService:
                         WHERE symbol = {symbol:String} AND interval = {interval:String}
                     """
 
-                    result = ch_client.query(sql, {'symbol': symbol, 'interval': interval})
+                    result = ch_client.query(sql, {"symbol": symbol, "interval": interval})
 
                     # 检查是否有数据且数据不为NULL
                     if result.result_rows and result.result_rows[0][0] is not None:
@@ -128,15 +132,17 @@ class DataBackfillService:
 
                         # 如果最新数据时间早于目标开始时间，说明历史数据不完整
                         if latest_time < target_start_time:
-                            logger.info(f"数据不完整: {symbol} {interval} 最新数据 {latest_time}，应该从 {target_start_time} 开始")
+                            logger.info(
+                                f"数据不完整: {symbol} {interval} 最新数据 {latest_time}，应该从 {target_start_time} 开始"
+                            )
 
                             task = BackfillTask(
                                 gap_log_id=0,
                                 symbol=symbol,
-                                data_type='candles',
+                                data_type="candles",
                                 interval=interval,
                                 start_time=target_start_time,
-                                end_time=latest_time  # 补充到已有数据开始的位置
+                                end_time=latest_time,  # 补充到已有数据开始的位置
                             )
                             tasks.append(task)
                             logger.info(f"需要回填: {symbol} {interval} 从 {target_start_time} 到 {latest_time}")
@@ -153,13 +159,15 @@ class DataBackfillService:
                             task = BackfillTask(
                                 gap_log_id=0,
                                 symbol=symbol,
-                                data_type='candles',
+                                data_type="candles",
                                 interval=interval,
                                 start_time=latest_time,
-                                end_time=now
+                                end_time=now,
                             )
                             tasks.append(task)
-                            logger.info(f"最新缺口: {symbol} {interval} 从 {latest_time} 到 {now} (延迟{time_since_latest.total_seconds()/3600:.1f}小时)")
+                            logger.info(
+                                f"最新缺口: {symbol} {interval} 从 {latest_time} 到 {now} (延迟{time_since_latest.total_seconds()/3600:.1f}小时)"
+                            )
                         else:
                             logger.info(f"数据完整: {symbol} {interval} 最新数据 {latest_time}，无需回填")
 
@@ -169,13 +177,15 @@ class DataBackfillService:
                         task = BackfillTask(
                             gap_log_id=0,
                             symbol=symbol,
-                            data_type='candles',
+                            data_type="candles",
                             interval=interval,
                             start_time=start_time,
-                            end_time=now
+                            end_time=now,
                         )
                         tasks.append(task)
-                        logger.info(f"完全无数据: {symbol} {interval} 从 {start_time} 到 {now} ({interval_lookback_days}天)")
+                        logger.info(
+                            f"完全无数据: {symbol} {interval} 从 {start_time} 到 {now} ({interval_lookback_days}天)"
+                        )
 
             logger.info(f"检测到 {len(tasks)} 个数据缺口")
             return tasks
@@ -183,9 +193,9 @@ class DataBackfillService:
         finally:
             ch_client.close()
 
-    def _find_precise_gaps(self, client, symbol: str, interval: str,
-                          start_time: datetime, end_time: datetime,
-                          interval_min: int) -> List[Tuple[datetime, datetime]]:
+    def _find_precise_gaps(
+        self, client, symbol: str, interval: str, start_time: datetime, end_time: datetime, interval_min: int
+    ) -> List[Tuple[datetime, datetime]]:
         """
         精确查找数据缺口
         """
@@ -200,12 +210,9 @@ class DataBackfillService:
             ORDER BY timestamp
         """
 
-        result = client.query(sql, {
-            'symbol': symbol,
-            'interval': interval,
-            'start_time': start_time,
-            'end_time': end_time
-        })
+        result = client.query(
+            sql, {"symbol": symbol, "interval": interval, "start_time": start_time, "end_time": end_time}
+        )
 
         if not result.result_rows:
             # 完全没有数据
@@ -252,11 +259,7 @@ class DataBackfillService:
         return gaps
 
     def backfill_candles(
-        self,
-        symbol: str,
-        interval: str,
-        start_time: datetime,
-        end_time: datetime
+        self, symbol: str, interval: str, start_time: datetime, end_time: datetime
     ) -> Tuple[int, Optional[str]]:
         """
         分批回填K线数据 - 支持大量历史数据下载
@@ -281,11 +284,11 @@ class DataBackfillService:
 
             # 分批策略：根据时间间隔决定每批的天数
             batch_days = {
-                '1d': 365,     # 日线一次获取1年
-                '4h': 180,     # 4小时线一次获取半年
-                '30m': 30,     # 30分钟线一次获取1个月
-                '5m': 7,       # 5分钟线一次获取1周
-                '1m': 3        # 1分钟线一次获取3天
+                "1d": 365,  # 日线一次获取1年
+                "4h": 180,  # 4小时线一次获取半年
+                "30m": 30,  # 30分钟线一次获取1个月
+                "5m": 7,  # 5分钟线一次获取1周
+                "1m": 3,  # 1分钟线一次获取3天
             }.get(interval, 30)
 
             total_records = 0
@@ -305,11 +308,11 @@ class DataBackfillService:
 
                     url = "https://fapi.binance.com/fapi/v1/klines"
                     params = {
-                        'symbol': binance_symbol,
-                        'interval': binance_interval,
-                        'startTime': start_ms,
-                        'endTime': end_ms,
-                        'limit': 1500
+                        "symbol": binance_symbol,
+                        "interval": binance_interval,
+                        "startTime": start_ms,
+                        "endTime": end_ms,
+                        "limit": 1500,
                     }
 
                     response = requests.get(url, params=params, timeout=30)
@@ -330,33 +333,35 @@ class DataBackfillService:
 
                             # 构造标准化数据
                             raw_data = {
-                                'timestamp': open_time,
-                                'exchange': 'binance',  # REST API原始名称
-                                'symbol': symbol,
-                                'interval': interval,
-                                'open': float(kline[1]),
-                                'high': float(kline[2]),
-                                'low': float(kline[3]),
-                                'close': float(kline[4]),
-                                'volume': float(kline[5]),
-                                'trades': int(kline[8]) if len(kline) > 8 else 0  # 交易次数，默认0
+                                "timestamp": open_time,
+                                "exchange": "binance",  # REST API原始名称
+                                "symbol": symbol,
+                                "interval": interval,
+                                "open": float(kline[1]),
+                                "high": float(kline[2]),
+                                "low": float(kline[3]),
+                                "close": float(kline[4]),
+                                "volume": float(kline[5]),
+                                "trades": int(kline[8]) if len(kline) > 8 else 0,  # 交易次数，默认0
                             }
 
                             # 数据标准化处理
-                            normalized_data = normalize_data(raw_data, 'candle')
+                            normalized_data = normalize_data(raw_data, "candle")
 
-                            insert_data.append([
-                                normalized_data['timestamp'],      # timestamp
-                                normalized_data['exchange'],       # exchange (标准化后的BINANCE_FUTURES)
-                                normalized_data['symbol'],         # symbol
-                                normalized_data['interval'],       # interval
-                                normalized_data['open'],           # open
-                                normalized_data['high'],           # high
-                                normalized_data['low'],            # low
-                                normalized_data['close'],          # close
-                                normalized_data['volume'],         # volume
-                                normalized_data.get('trades', 0)   # trades 交易次数，默认0
-                            ])
+                            insert_data.append(
+                                [
+                                    normalized_data["timestamp"],  # timestamp
+                                    normalized_data["exchange"],  # exchange (标准化后的BINANCE_FUTURES)
+                                    normalized_data["symbol"],  # symbol
+                                    normalized_data["interval"],  # interval
+                                    normalized_data["open"],  # open
+                                    normalized_data["high"],  # high
+                                    normalized_data["low"],  # low
+                                    normalized_data["close"],  # close
+                                    normalized_data["volume"],  # volume
+                                    normalized_data.get("trades", 0),  # trades 交易次数，默认0
+                                ]
+                            )
 
                         # 批量插入到ClickHouse - 添加详细调试信息
                         if insert_data:
@@ -390,7 +395,7 @@ class DataBackfillService:
                                     skipped_records = len(insert_data)
                                 else:
                                     # 直接插入9个字段，与表结构完全匹配
-                                    ch_client.insert('candles', insert_data)
+                                    ch_client.insert("candles", insert_data)
                                     logger.info(f"  ✅ 插入 {len(insert_data)} 条数据")
                                     skipped_records = 0
 
@@ -423,19 +428,13 @@ class DataBackfillService:
 
     def convert_symbol_for_binance(self, symbol: str) -> str:
         """转换cryptofeed符号格式为Binance格式"""
-        if symbol.endswith('-PERP'):
-            return symbol.replace('-USDT-PERP', 'USDT').replace('-', '')
-        return symbol.replace('-', '')
+        if symbol.endswith("-PERP"):
+            return symbol.replace("-USDT-PERP", "USDT").replace("-", "")
+        return symbol.replace("-", "")
 
     def convert_interval_for_binance(self, interval: str) -> str:
         """转换时间间隔格式"""
-        mapping = {
-            '1m': '1m',
-            '5m': '5m',
-            '30m': '30m',
-            '4h': '4h',
-            '1d': '1d'
-        }
+        mapping = {"1m": "1m", "5m": "5m", "30m": "30m", "4h": "4h", "1d": "1d"}
         return mapping.get(interval, interval)
 
     def run_backfill_tasks(self, symbols: List[str], lookback_days: int = None) -> Dict[str, any]:
@@ -451,7 +450,7 @@ class DataBackfillService:
         """
         # 如果没有指定lookback_days，从配置中读取
         if lookback_days is None:
-            lookback_days = config.get('data_backfill.default_lookback_days', 7)
+            lookback_days = config.get("data_backfill.default_lookback_days", 7)
 
         logger.info(f"Starting backfill for {len(symbols)} symbols, lookback {lookback_days} days")
 
@@ -473,10 +472,7 @@ class DataBackfillService:
                 logger.info(f"Processing backfill task: {task.symbol} {task.interval}")
 
                 records_added, error_msg = self.backfill_candles(
-                    task.symbol,
-                    task.interval,
-                    task.start_time,
-                    task.end_time
+                    task.symbol, task.interval, task.start_time, task.end_time
                 )
 
                 if error_msg:
@@ -501,7 +497,7 @@ class DataBackfillService:
             "successful": successful_tasks,
             "failed": failed_tasks,
             "records_added": total_records,
-            "failed_symbols": failed_symbols
+            "failed_symbols": failed_symbols,
         }
 
         logger.info(f"Backfill completed: {successful_tasks}/{len(tasks)} successful, {total_records} records added")
@@ -518,16 +514,20 @@ class DataBackfillService:
             symbols: 要监控的交易对列表
             check_interval_hours: 检查间隔（小时）
         """
-        logger.info(f"Starting continuous backfill service for {len(symbols)} symbols (check every {check_interval_hours} hours)")
+        logger.info(
+            f"Starting continuous backfill service for {len(symbols)} symbols (check every {check_interval_hours} hours)"
+        )
 
         while True:
             try:
                 # 运行一轮回填任务
-                default_lookback = config.get('data_backfill.default_lookback_days', 7)
+                default_lookback = config.get("data_backfill.default_lookback_days", 7)
                 result = self.run_backfill_tasks(symbols, lookback_days=default_lookback)
 
                 if result["total_tasks"] > 0:
-                    logger.info(f"Backfill cycle: {result['successful']}/{result['total_tasks']} tasks successful, {result['records_added']} records added")
+                    logger.info(
+                        f"Backfill cycle: {result['successful']}/{result['total_tasks']} tasks successful, {result['records_added']} records added"
+                    )
 
                 # 等待下次检查
                 time.sleep(check_interval_hours * 3600)
@@ -538,8 +538,5 @@ class DataBackfillService:
 
     def _get_interval_minutes(self, interval: str) -> int:
         """获取时间间隔的分钟数"""
-        interval_mapping = {
-            '1m': 1, '5m': 5, '15m': 15, '30m': 30,
-            '1h': 60, '4h': 240, '1d': 1440
-        }
+        interval_mapping = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
         return interval_mapping.get(interval, 60)

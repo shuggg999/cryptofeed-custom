@@ -6,14 +6,15 @@
 import asyncio
 import json
 import logging
-import psutil
-import clickhouse_connect
 import threading
 import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Dict, Any, Optional, List
-from urllib.parse import urlparse, parse_qs
+from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, urlparse
+
+import clickhouse_connect
+import psutil
 
 from ..config import config
 
@@ -24,17 +25,17 @@ class HealthMonitor:
     """健康监控器"""
 
     def __init__(self):
-        self.enabled = config.get('monitoring.metrics_enabled', True)
-        self.health_port = config.get('monitoring.health_check_port', 8080)
-        self.stats_interval = config.get('monitoring.stats_interval', 300)
+        self.enabled = config.get("monitoring.metrics_enabled", True)
+        self.health_port = config.get("monitoring.health_check_port", 8080)
+        self.stats_interval = config.get("monitoring.stats_interval", 300)
 
         # ClickHouse数据库配置
         self.db_config = {
-            'host': config.get('clickhouse.host', 'localhost'),
-            'port': config.get('clickhouse.port', 8123),
-            'user': config.get('clickhouse.user', 'default'),
-            'password': config.get('clickhouse.password', 'password123'),
-            'database': config.get('clickhouse.database', 'cryptofeed')
+            "host": config.get("clickhouse.host", "localhost"),
+            "port": config.get("clickhouse.port", 8123),
+            "user": config.get("clickhouse.user", "default"),
+            "password": config.get("clickhouse.password", "password123"),
+            "database": config.get("clickhouse.database", "cryptofeed"),
         }
 
         # 系统状态
@@ -61,16 +62,16 @@ class HealthMonitor:
 
     def register_components(self, **components):
         """注册监控组件"""
-        self.symbol_discovery = components.get('symbol_discovery')
-        self.connection_pool = components.get('connection_pool')
-        self.data_cleanup = components.get('data_cleanup')
-        self.wal_manager = components.get('wal_manager')
+        self.symbol_discovery = components.get("symbol_discovery")
+        self.connection_pool = components.get("connection_pool")
+        self.data_cleanup = components.get("data_cleanup")
+        self.wal_manager = components.get("wal_manager")
 
     def _start_http_server(self):
         """启动HTTP服务器"""
         try:
             handler = self._create_http_handler()
-            self.http_server = HTTPServer(('0.0.0.0', self.health_port), handler)
+            self.http_server = HTTPServer(("0.0.0.0", self.health_port), handler)
             self.server_thread = threading.Thread(target=self.http_server.serve_forever, daemon=True)
             self.server_thread.start()
             logger.info(f"HTTP健康检查服务启动: 端口 {self.health_port}")
@@ -92,13 +93,13 @@ class HealthMonitor:
                     path = parsed_url.path
                     query_params = parse_qs(parsed_url.query)
 
-                    if path == '/health':
+                    if path == "/health":
                         self._handle_health_check()
-                    elif path == '/metrics':
+                    elif path == "/metrics":
                         self._handle_metrics()
-                    elif path == '/stats':
+                    elif path == "/stats":
                         self._handle_stats()
-                    elif path == '/status':
+                    elif path == "/status":
                         self._handle_status()
                     else:
                         self._handle_404()
@@ -110,7 +111,7 @@ class HealthMonitor:
             def _handle_health_check(self):
                 """健康检查端点"""
                 health_status = health_monitor.get_health_status()
-                status_code = 200 if health_status['status'] == 'healthy' else 503
+                status_code = 200 if health_status["status"] == "healthy" else 503
 
                 self._send_json_response(health_status, status_code)
 
@@ -137,14 +138,14 @@ class HealthMonitor:
                 """发送JSON响应"""
                 response_data = json.dumps(data, indent=2, ensure_ascii=False)
                 self.send_response(status_code)
-                self.send_header('Content-type', 'application/json')
-                self.send_header('Content-Length', len(response_data.encode('utf-8')))
+                self.send_header("Content-type", "application/json")
+                self.send_header("Content-Length", len(response_data.encode("utf-8")))
                 self.end_headers()
-                self.wfile.write(response_data.encode('utf-8'))
+                self.wfile.write(response_data.encode("utf-8"))
 
             def _send_error(self, code, message):
                 """发送错误响应"""
-                error_data = {'error': message, 'code': code}
+                error_data = {"error": message, "code": code}
                 self._send_json_response(error_data, code)
 
         return HealthHandler
@@ -165,23 +166,19 @@ class HealthMonitor:
             overall_healthy = db_healthy and system_healthy and app_healthy
 
             return {
-                'status': 'healthy' if overall_healthy else 'unhealthy',
-                'timestamp': datetime.now().isoformat(),
-                'checks': {
-                    'database': 'healthy' if db_healthy else 'unhealthy',
-                    'system': 'healthy' if system_healthy else 'unhealthy',
-                    'application': 'healthy' if app_healthy else 'unhealthy'
+                "status": "healthy" if overall_healthy else "unhealthy",
+                "timestamp": datetime.now().isoformat(),
+                "checks": {
+                    "database": "healthy" if db_healthy else "unhealthy",
+                    "system": "healthy" if system_healthy else "unhealthy",
+                    "application": "healthy" if app_healthy else "unhealthy",
                 },
-                'uptime': self._get_uptime()
+                "uptime": self._get_uptime(),
             }
 
         except Exception as e:
             logger.error(f"健康检查失败: {e}")
-            return {
-                'status': 'unhealthy',
-                'timestamp': datetime.now().isoformat(),
-                'error': str(e)
-            }
+            return {"status": "unhealthy", "timestamp": datetime.now().isoformat(), "error": str(e)}
 
     def _check_database_health(self) -> bool:
         """检查数据库健康状态"""
@@ -208,7 +205,7 @@ class HealthMonitor:
                 return False
 
             # 检查磁盘使用率
-            disk = psutil.disk_usage('/')
+            disk = psutil.disk_usage("/")
             if disk.percent > 90:
                 return False
 
@@ -224,7 +221,7 @@ class HealthMonitor:
             # 检查连接池状态
             if self.connection_pool:
                 pool_stats = self.connection_pool.get_stats()
-                if pool_stats['active_connections'] == 0:
+                if pool_stats["active_connections"] == 0:
                     return False
 
             # 检查数据流
@@ -244,10 +241,12 @@ class HealthMonitor:
             client = clickhouse_connect.get_client(**self.db_config)
 
             # 检查最近5分钟是否有交易数据
-            result = client.query("""
+            result = client.query(
+                """
                 SELECT COUNT(*) FROM trades
                 WHERE timestamp > now() - INTERVAL 5 MINUTE
-            """)
+            """
+            )
             recent_trades = result.result_rows[0][0] if result.result_rows else 0
 
             client.close()
@@ -263,7 +262,7 @@ class HealthMonitor:
             # 系统指标
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
+            disk = psutil.disk_usage("/")
 
             # 网络指标
             network = psutil.net_io_counters()
@@ -273,40 +272,40 @@ class HealthMonitor:
             process_memory = process.memory_info()
 
             metrics = {
-                'timestamp': datetime.now().isoformat(),
-                'system': {
-                    'cpu_percent': cpu_percent,
-                    'memory_percent': memory.percent,
-                    'memory_used_gb': memory.used / (1024**3),
-                    'memory_total_gb': memory.total / (1024**3),
-                    'disk_percent': disk.percent,
-                    'disk_used_gb': disk.used / (1024**3),
-                    'disk_total_gb': disk.total / (1024**3)
+                "timestamp": datetime.now().isoformat(),
+                "system": {
+                    "cpu_percent": cpu_percent,
+                    "memory_percent": memory.percent,
+                    "memory_used_gb": memory.used / (1024**3),
+                    "memory_total_gb": memory.total / (1024**3),
+                    "disk_percent": disk.percent,
+                    "disk_used_gb": disk.used / (1024**3),
+                    "disk_total_gb": disk.total / (1024**3),
                 },
-                'network': {
-                    'bytes_sent': network.bytes_sent,
-                    'bytes_recv': network.bytes_recv,
-                    'packets_sent': network.packets_sent,
-                    'packets_recv': network.packets_recv
+                "network": {
+                    "bytes_sent": network.bytes_sent,
+                    "bytes_recv": network.bytes_recv,
+                    "packets_sent": network.packets_sent,
+                    "packets_recv": network.packets_recv,
                 },
-                'process': {
-                    'memory_rss_mb': process_memory.rss / (1024**2),
-                    'memory_vms_mb': process_memory.vms / (1024**2),
-                    'cpu_percent': process.cpu_percent(),
-                    'num_threads': process.num_threads()
-                }
+                "process": {
+                    "memory_rss_mb": process_memory.rss / (1024**2),
+                    "memory_vms_mb": process_memory.vms / (1024**2),
+                    "cpu_percent": process.cpu_percent(),
+                    "num_threads": process.num_threads(),
+                },
             }
 
             # 数据库指标
             db_metrics = self._get_database_metrics()
             if db_metrics:
-                metrics['database'] = db_metrics
+                metrics["database"] = db_metrics
 
             return metrics
 
         except Exception as e:
             logger.error(f"获取指标失败: {e}")
-            return {'error': str(e)}
+            return {"error": str(e)}
 
     def _get_database_metrics(self) -> Optional[Dict[str, Any]]:
         """获取数据库指标"""
@@ -318,17 +317,29 @@ class HealthMonitor:
             connection_count = connection_result.result_rows[0][0] if connection_result.result_rows else 0
 
             # 数据库大小（ClickHouse 通过 system.parts 表获取）
-            size_result = client.query(f"""
+            size_result = client.query(
+                f"""
                 SELECT formatReadableSize(sum(bytes_on_disk))
                 FROM system.parts
                 WHERE database = '{self.db_config.get("database", "cryptofeed")}'
                 AND active = 1
-            """)
+            """
+            )
             db_size = size_result.result_rows[0][0] if size_result.result_rows else "0B"
 
             # 各表记录数
             table_counts = {}
-            tables = ['trades', 'funding', 'candles_1m', 'candles_5m', 'candles_30m', 'candles_4h', 'candles_1d', 'liquidations', 'open_interest']
+            tables = [
+                "trades",
+                "funding",
+                "candles_1m",
+                "candles_5m",
+                "candles_30m",
+                "candles_4h",
+                "candles_1d",
+                "liquidations",
+                "open_interest",
+            ]
             for table in tables:
                 try:
                     result = client.query(f"SELECT COUNT(*) FROM {table}")
@@ -338,11 +349,7 @@ class HealthMonitor:
 
             client.close()
 
-            return {
-                'connection_count': connection_count,
-                'database_size': db_size,
-                'table_counts': table_counts
-            }
+            return {"connection_count": connection_count, "database_size": db_size, "table_counts": table_counts}
 
         except Exception as e:
             logger.warning(f"获取数据库指标失败: {e}")
@@ -351,41 +358,39 @@ class HealthMonitor:
     def get_comprehensive_stats(self) -> Dict[str, Any]:
         """获取综合统计信息"""
         stats = {
-            'timestamp': datetime.now().isoformat(),
-            'health': self.get_health_status(),
-            'metrics': self.get_metrics()
+            "timestamp": datetime.now().isoformat(),
+            "health": self.get_health_status(),
+            "metrics": self.get_metrics(),
         }
 
         # 添加组件统计
         if self.symbol_discovery:
-            stats['symbol_discovery'] = {
-                'symbol_count': self.symbol_discovery.get_symbol_count()
-            }
+            stats["symbol_discovery"] = {"symbol_count": self.symbol_discovery.get_symbol_count()}
 
         if self.connection_pool:
-            stats['connection_pool'] = self.connection_pool.get_stats()
+            stats["connection_pool"] = self.connection_pool.get_stats()
 
         if self.data_cleanup:
-            stats['data_cleanup'] = self.data_cleanup.get_stats()
+            stats["data_cleanup"] = self.data_cleanup.get_stats()
 
         if self.wal_manager:
-            stats['wal'] = self.wal_manager.get_stats()
+            stats["wal"] = self.wal_manager.get_stats()
 
         return stats
 
     def get_status_overview(self) -> Dict[str, Any]:
         """获取状态概览"""
         return {
-            'service': 'Cryptofeed Monitor',
-            'version': '1.txt.0.0',
-            'status': self.get_health_status()['status'],
-            'timestamp': datetime.now().isoformat(),
-            'uptime': self._get_uptime(),
-            'endpoints': {
-                'health': f'http://localhost:{self.health_port}/health',
-                'metrics': f'http://localhost:{self.health_port}/metrics',
-                'stats': f'http://localhost:{self.health_port}/stats'
-            }
+            "service": "Cryptofeed Monitor",
+            "version": "1.txt.0.0",
+            "status": self.get_health_status()["status"],
+            "timestamp": datetime.now().isoformat(),
+            "uptime": self._get_uptime(),
+            "endpoints": {
+                "health": f"http://localhost:{self.health_port}/health",
+                "metrics": f"http://localhost:{self.health_port}/metrics",
+                "stats": f"http://localhost:{self.health_port}/stats",
+            },
         }
 
     def _get_uptime(self) -> str:
@@ -394,7 +399,7 @@ class HealthMonitor:
             process = psutil.Process()
             create_time = datetime.fromtimestamp(process.create_time())
             uptime = datetime.now() - create_time
-            return str(uptime).split('.')[0]  # 去掉微秒
+            return str(uptime).split(".")[0]  # 去掉微秒
         except:
             return "unknown"
 
@@ -407,11 +412,7 @@ class HealthMonitor:
 
     def add_alert(self, level: str, message: str):
         """添加告警"""
-        alert = {
-            'timestamp': datetime.now().isoformat(),
-            'level': level,
-            'message': message
-        }
+        alert = {"timestamp": datetime.now().isoformat(), "level": level, "message": message}
         self.alerts.append(alert)
 
         # 只保留最近100条告警

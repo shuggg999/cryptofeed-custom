@@ -1,14 +1,17 @@
 """
 API响应模型定义
 """
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Union
+
 from datetime import datetime
 from decimal import Decimal
+from typing import List, Optional, Union
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TradeResponse(BaseModel):
     """交易数据响应模型"""
+
     model_config = ConfigDict(from_attributes=True)
 
     timestamp: datetime
@@ -22,6 +25,7 @@ class TradeResponse(BaseModel):
 
 class CandleResponse(BaseModel):
     """K线数据响应模型"""
+
     model_config = ConfigDict(from_attributes=True)
 
     timestamp: datetime
@@ -37,6 +41,7 @@ class CandleResponse(BaseModel):
 
 class FundingResponse(BaseModel):
     """资金费率响应模型"""
+
     model_config = ConfigDict(from_attributes=True)
 
     timestamp: datetime
@@ -48,6 +53,7 @@ class FundingResponse(BaseModel):
 
 class TickerResponse(BaseModel):
     """行情数据响应模型"""
+
     model_config = ConfigDict(from_attributes=True)
 
     timestamp: datetime
@@ -59,6 +65,7 @@ class TickerResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """健康检查响应模型"""
+
     status: str = Field(..., description="服务状态")
     timestamp: datetime = Field(..., description="检查时间")
     version: str = Field(..., description="服务版本")
@@ -69,6 +76,7 @@ class HealthResponse(BaseModel):
 
 class DataStatsResponse(BaseModel):
     """数据统计响应模型"""
+
     symbol: str
     latest_trade: Optional[datetime] = Field(None, description="最新交易时间")
     latest_candle: Optional[datetime] = Field(None, description="最新K线时间")
@@ -79,6 +87,7 @@ class DataStatsResponse(BaseModel):
 
 class DataGapResponse(BaseModel):
     """数据缺口响应模型"""
+
     model_config = ConfigDict(from_attributes=True)
 
     symbol: str
@@ -93,22 +102,26 @@ class DataGapResponse(BaseModel):
 
 class APIResponse(BaseModel):
     """通用API响应包装器"""
+
     success: bool = Field(True, description="请求是否成功")
     message: str = Field("OK", description="响应消息")
-    data: Optional[Union[
-        List[TradeResponse],
-        List[CandleResponse],
-        List[FundingResponse],
-        List[TickerResponse],
-        HealthResponse,
-        DataStatsResponse,
-        List[DataGapResponse]
-    ]] = Field(None, description="响应数据")
+    data: Optional[
+        Union[
+            List[TradeResponse],
+            List[CandleResponse],
+            List[FundingResponse],
+            List[TickerResponse],
+            HealthResponse,
+            DataStatsResponse,
+            List[DataGapResponse],
+        ]
+    ] = Field(None, description="响应数据")
     count: Optional[int] = Field(None, description="数据数量")
 
 
 class ErrorResponse(BaseModel):
     """错误响应模型"""
+
     success: bool = Field(False, description="请求是否成功")
     message: str = Field(..., description="错误消息")
     error_code: Optional[str] = Field(None, description="错误码")
@@ -118,6 +131,7 @@ class ErrorResponse(BaseModel):
 # Query参数模型
 class TimeRangeQuery(BaseModel):
     """时间范围查询参数"""
+
     start_time: Optional[datetime] = Field(None, description="开始时间")
     end_time: Optional[datetime] = Field(None, description="结束时间")
     limit: int = Field(100, ge=1, le=1000, description="返回数量限制")
@@ -125,10 +139,12 @@ class TimeRangeQuery(BaseModel):
 
 class CandleQuery(TimeRangeQuery):
     """K线查询参数"""
+
     interval: str = Field("1m", description="时间间隔: 1m, 5m, 15m, 1h, 4h, 1d")
 
 
 class SymbolListQuery(BaseModel):
     """多symbol查询参数"""
+
     symbols: List[str] = Field(..., description="交易对列表")
     exchange: str = Field("binance", description="交易所")

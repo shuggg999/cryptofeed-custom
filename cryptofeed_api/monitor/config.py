@@ -1,81 +1,99 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Configuration management module
-Read YAML config files and provide configuration access interface
+配置管理模块
+读取YAML配置文件并提供配置访问接口
 """
 import os
-import yaml
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+import yaml
+
 
 class Config:
-    """Configuration manager"""
+    """配置管理器"""
 
-    def __init__(self, config_file: str = None):
+    def __init__(self, config_file: Optional[str] = None):
+        """初始化配置管理器
+
+        Args:
+            config_file: 配置文件路径,如果为None则使用默认路径
+        """
         self.data = {}
 
-        # Default configuration
+        # 默认配置
         self.default_config = {
-            'database': {
-                'host': '127.0.0.1',
-                'port': 5432,
-                'user': 'postgres',
-                'password': 'password',
-                'database': 'cryptofeed'
+            "database": {
+                "host": "127.0.0.1",
+                "port": 5432,
+                "user": "postgres",
+                "password": "password",
+                "database": "cryptofeed",
             },
-            'connection_pool': {
-                'streams_per_connection': 1000,
-                'auto_scaling': {
-                    'enabled': True,
-                    'symbol_check_interval': 300
-                }
+            "connection_pool": {
+                "streams_per_connection": 1000,
+                "auto_scaling": {"enabled": True, "symbol_check_interval": 300},
             },
-            'collection': {
-                'data_types': [
-                    'trades', 'ticker', 'funding', 'l2_book',
-                    'candles', 'candles', 'candles', 'candles', 'candles',  # 统一使用candles表
-                    'liquidations', 'open_interest', 'index'
+            "collection": {
+                "data_types": [
+                    "trades",
+                    "ticker",
+                    "funding",
+                    "l2_book",
+                    "candles",
+                    "candles",
+                    "candles",
+                    "candles",
+                    "candles",  # 统一使用candles表
+                    "liquidations",
+                    "open_interest",
+                    "index",
                 ]
             },
-            'monitoring': {
-                'metrics_enabled': True,
-                'health_check_port': 8080,
-                'stats_interval': 300
-            },
-            'logging': {
-                'level': 'INFO',
-                'filename': 'logs/cryptofeed_monitor.log'
-            }
+            "monitoring": {"metrics_enabled": True, "health_check_port": 8080, "stats_interval": 300},
+            "logging": {"level": "INFO", "filename": "logs/cryptofeed_monitor.log"},
         }
 
-        # Load config file
+        # 加载配置文件
         if config_file:
             self.load_config(config_file)
         else:
-            # Try to load from default location
+            # 尝试从默认位置加载
             project_root = Path(__file__).parent.parent.parent
-            config_path = project_root / 'config' / 'main.yaml'
+            config_path = project_root / "config" / "main.yaml"
             if config_path.exists():
                 self.load_config(str(config_path))
             else:
                 self.data = self.default_config
 
-    def load_config(self, config_file: str):
-        """Load configuration file"""
+    def load_config(self, config_file: str) -> None:
+        """加载配置文件
+
+        Args:
+            config_file: 配置文件路径
+        """
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
+            with open(config_file, "r", encoding="utf-8") as f:
                 loaded_config = yaml.safe_load(f) or {}
 
-            # Merge default and loaded config
+            # 合并默认配置和加载的配置
             self.data = self._merge_config(self.default_config, loaded_config)
         except Exception as e:
-            print(f"Warning: Failed to load config file {config_file}: {e}")
-            print("Using default configuration")
+            print(f"警告: 加载配置文件失败 {config_file}: {e}")
+            print("使用默认配置")
             self.data = self.default_config
 
     def _merge_config(self, default: Dict, custom: Dict) -> Dict:
-        """Recursively merge configurations"""
+        """递归合并配置字典
+
+        Args:
+            default: 默认配置
+            custom: 自定义配置
+
+        Returns:
+            合并后的配置字典
+        """
         result = default.copy()
         for key, value in custom.items():
             if key in result and isinstance(result[key], dict) and isinstance(value, dict):
@@ -85,22 +103,30 @@ class Config:
         return result
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get configuration value, supports dot-separated key names and environment variables"""
+        """获取配置值,支持点号分隔的键名和环境变量
 
-        # Check for environment variables first
-        env_key = key.replace('.', '_').upper()
+        Args:
+            key: 配置键名,支持点号分隔(如 'database.host')
+            default: 默认值
+
+        Returns:
+            配置值,如果不存在则返回默认值
+        """
+
+        # 首先检查环境变量
+        env_key = key.replace(".", "_").upper()
         if env_key in os.environ:
             env_value = os.environ[env_key]
-            # Try to convert to appropriate type
-            if env_value.lower() in ('true', 'false'):
-                return env_value.lower() == 'true'
+            # 尝试转换为适当的类型
+            if env_value.lower() in ("true", "false"):
+                return env_value.lower() == "true"
             elif env_value.isdigit():
                 return int(env_value)
             else:
                 return env_value
 
-        # Fall back to config file values
-        keys = key.split('.')
+        # 回退到配置文件值
+        keys = key.split(".")
         value = self.data
 
         try:
@@ -110,5 +136,6 @@ class Config:
         except (KeyError, TypeError):
             return default
 
-# Global config instance
+
+# 全局配置实例
 config = Config()

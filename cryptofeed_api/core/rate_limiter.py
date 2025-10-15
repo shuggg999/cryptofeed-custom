@@ -1,15 +1,16 @@
 """
 API限流和速率控制
 """
-import asyncio
-import time
-from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple, Any
-from dataclasses import dataclass
-from collections import deque, defaultdict
-import logging
 
-from fastapi import Request, HTTPException
+import asyncio
+import logging
+import time
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional, Tuple
+
+from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
@@ -19,14 +20,16 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RateLimit:
     """限流配置"""
+
     requests: int  # 请求数量
-    window: int    # 时间窗口（秒）
+    window: int  # 时间窗口（秒）
     burst: Optional[int] = None  # 突发请求数量
 
 
 @dataclass
 class RateLimitStatus:
     """限流状态"""
+
     allowed: bool
     remaining: int
     reset_time: float
@@ -61,11 +64,7 @@ class TokenBucket:
     def get_status(self) -> Dict[str, float]:
         """获取桶状态"""
         self._refill(time.time())
-        return {
-            "tokens": self.tokens,
-            "capacity": self.capacity,
-            "refill_rate": self.refill_rate
-        }
+        return {"tokens": self.tokens, "capacity": self.capacity, "refill_rate": self.refill_rate}
 
 
 class SlidingWindowCounter:
@@ -108,7 +107,7 @@ class SlidingWindowCounter:
             "current_requests": len(self.requests),
             "max_requests": self.max_requests,
             "window_size": self.window_size,
-            "reset_time": self.get_reset_time()
+            "reset_time": self.get_reset_time(),
         }
 
 
@@ -127,16 +126,12 @@ class RateLimiter:
         self.rate_limits[key] = rate_limit
 
         # 创建滑动窗口计数器
-        self.limiters[key] = SlidingWindowCounter(
-            window_size=rate_limit.window,
-            max_requests=rate_limit.requests
-        )
+        self.limiters[key] = SlidingWindowCounter(window_size=rate_limit.window, max_requests=rate_limit.requests)
 
         # 如果有突发限制，创建令牌桶
         if rate_limit.burst:
             self.token_buckets[key] = TokenBucket(
-                capacity=rate_limit.burst,
-                refill_rate=rate_limit.requests / rate_limit.window
+                capacity=rate_limit.burst, refill_rate=rate_limit.requests / rate_limit.window
             )
 
     def check_rate_limit(self, key: str, client_ip: str = None) -> RateLimitStatus:
@@ -148,7 +143,7 @@ class RateLimiter:
                     allowed=False,
                     remaining=0,
                     reset_time=self.blocked_ips[client_ip],
-                    retry_after=int(self.blocked_ips[client_ip] - time.time())
+                    retry_after=int(self.blocked_ips[client_ip] - time.time()),
                 )
             else:
                 # 解封IP
@@ -168,10 +163,7 @@ class RateLimiter:
             self.request_stats[key]["rejected"] += 1
 
             return RateLimitStatus(
-                allowed=False,
-                remaining=0,
-                reset_time=reset_time,
-                retry_after=int(reset_time - time.time())
+                allowed=False, remaining=0, reset_time=reset_time, retry_after=int(reset_time - time.time())
             )
 
         # 检查令牌桶（突发限制）
@@ -180,20 +172,13 @@ class RateLimiter:
             if not bucket.consume(1):
                 self.request_stats[key]["burst_rejected"] += 1
                 return RateLimitStatus(
-                    allowed=False,
-                    remaining=0,
-                    reset_time=reset_time,
-                    retry_after=1  # 令牌桶通常很快恢复
+                    allowed=False, remaining=0, reset_time=reset_time, retry_after=1  # 令牌桶通常很快恢复
                 )
 
         # 记录允许的请求
         self.request_stats[key]["allowed"] += 1
 
-        return RateLimitStatus(
-            allowed=True,
-            remaining=remaining,
-            reset_time=reset_time
-        )
+        return RateLimitStatus(allowed=True, remaining=remaining, reset_time=reset_time)
 
     def block_ip(self, ip: str, duration: int = 3600):
         """阻塞IP地址"""
@@ -208,11 +193,7 @@ class RateLimiter:
 
     def get_stats(self) -> Dict[str, Any]:
         """获取限流统计信息"""
-        stats = {
-            "rate_limits": {},
-            "blocked_ips": len(self.blocked_ips),
-            "request_stats": dict(self.request_stats)
-        }
+        stats = {"rate_limits": {}, "blocked_ips": len(self.blocked_ips), "request_stats": dict(self.request_stats)}
 
         for key in self.limiters:
             limiter_stats = self.limiters[key].get_status()
@@ -227,8 +208,8 @@ class RateLimiter:
                 "config": {
                     "requests": self.rate_limits[key].requests,
                     "window": self.rate_limits[key].window,
-                    "burst": self.rate_limits[key].burst
-                }
+                    "burst": self.rate_limits[key].burst,
+                },
             }
 
         return stats
@@ -252,8 +233,8 @@ DEFAULT_RATE_LIMITS = {
     "api_key": RateLimit(requests=1000, window=60, burst=100),  # 有API key的用户
     "premium": RateLimit(requests=5000, window=60, burst=500),  # 高级用户
     "candles": RateLimit(requests=200, window=60, burst=50),  # K线数据端点
-    "trades": RateLimit(requests=100, window=60, burst=20),   # 交易数据端点
-    "funding": RateLimit(requests=50, window=60, burst=10),   # 资金费率端点
+    "trades": RateLimit(requests=100, window=60, burst=20),  # 交易数据端点
+    "funding": RateLimit(requests=50, window=60, burst=10),  # 资金费率端点
 }
 
 # 初始化默认限流规则
@@ -314,17 +295,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             headers = {
                 "X-RateLimit-Limit": str(self.limiter.rate_limits.get(rate_limit_key, RateLimit(0, 0)).requests),
                 "X-RateLimit-Remaining": "0",
-                "X-RateLimit-Reset": str(int(status.reset_time))
+                "X-RateLimit-Reset": str(int(status.reset_time)),
             }
 
             if status.retry_after:
                 headers["Retry-After"] = str(status.retry_after)
 
-            raise HTTPException(
-                status_code=429,
-                detail="Rate limit exceeded",
-                headers=headers
-            )
+            raise HTTPException(status_code=429, detail="Rate limit exceeded", headers=headers)
 
         # 处理请求
         response = await call_next(request)
@@ -341,6 +318,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 # 装饰器形式的限流器
 def rate_limit(key: str = "default"):
     """限流装饰器"""
+
     def decorator(func):
         async def wrapper(*args, **kwargs):
             # 这里可以从请求上下文获取IP等信息
@@ -350,11 +328,13 @@ def rate_limit(key: str = "default"):
                 raise HTTPException(
                     status_code=429,
                     detail="Rate limit exceeded",
-                    headers={"Retry-After": str(status.retry_after or 60)}
+                    headers={"Retry-After": str(status.retry_after or 60)},
                 )
 
             return await func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 

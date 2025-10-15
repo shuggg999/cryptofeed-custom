@@ -1,18 +1,16 @@
 """
 资金费率API端点 - 使用ClickHouse
 """
+
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ...models.schemas import FundingResponse, APIResponse, ErrorResponse
-from ...core.clickhouse import get_clickhouse, ClickHouseService
-from ..dependencies import (
-    CommonQueryParams, TimeRangeParams, validate_symbol,
-    validate_exchange, get_pagination
-)
+from ...core.clickhouse import ClickHouseService, get_clickhouse
+from ...models.schemas import APIResponse, ErrorResponse, FundingResponse
+from ..dependencies import CommonQueryParams, TimeRangeParams, get_pagination, validate_exchange, validate_symbol
 
 router = APIRouter(prefix="/funding", tags=["Funding"])
 logger = logging.getLogger(__name__)
@@ -23,7 +21,7 @@ async def get_funding(
     common_params: CommonQueryParams = Depends(),
     time_params: TimeRangeParams = Depends(),
     pagination: Dict = Depends(get_pagination),
-    ch: ClickHouseService = Depends(get_clickhouse)
+    ch: ClickHouseService = Depends(get_clickhouse),
 ) -> APIResponse:
     """
     获取资金费率数据
@@ -37,33 +35,28 @@ async def get_funding(
             start_time=time_params.start_time,
             end_time=time_params.end_time,
             limit=pagination["limit"],
-            offset=pagination["offset"]
+            offset=pagination["offset"],
         )
 
         # 转换为响应格式
         funding_rates = []
         for row in funding_data:
             funding = FundingResponse(
-                timestamp=row['timestamp'],
-                symbol=row['symbol'],
-                rate=float(row['rate']),
-                next_funding_time=row.get('next_funding_time'),
-                exchange="BINANCE"
+                timestamp=row["timestamp"],
+                symbol=row["symbol"],
+                rate=float(row["rate"]),
+                next_funding_time=row.get("next_funding_time"),
+                exchange="BINANCE",
             )
             funding_rates.append(funding)
 
         # 获取总数（用于分页）
         total_count = ch.get_funding_count(
-            symbol=common_params.symbol,
-            start_time=time_params.start_time,
-            end_time=time_params.end_time
+            symbol=common_params.symbol, start_time=time_params.start_time, end_time=time_params.end_time
         )
 
         return APIResponse(
-            success=True,
-            message=f"Retrieved {len(funding_rates)} funding rates",
-            data=funding_rates,
-            count=total_count
+            success=True, message=f"Retrieved {len(funding_rates)} funding rates", data=funding_rates, count=total_count
         )
 
     except Exception as e:
@@ -76,26 +69,22 @@ async def get_latest_funding(
     symbol: str = Depends(validate_symbol),
     exchange: str = Depends(validate_exchange),
     limit: int = Query(100, ge=1, le=1000, description="返回数量"),
-    ch: ClickHouseService = Depends(get_clickhouse)
+    ch: ClickHouseService = Depends(get_clickhouse),
 ) -> APIResponse:
     """
     获取最新资金费率数据
     """
     try:
-        funding_data = ch.get_funding(
-            symbol=symbol,
-            limit=limit,
-            offset=0
-        )
+        funding_data = ch.get_funding(symbol=symbol, limit=limit, offset=0)
 
         funding_rates = []
         for row in funding_data:
             funding = FundingResponse(
-                timestamp=row['timestamp'],
-                symbol=row['symbol'],
-                rate=float(row['rate']),
-                next_funding_time=row.get('next_funding_time'),
-                exchange="BINANCE"
+                timestamp=row["timestamp"],
+                symbol=row["symbol"],
+                rate=float(row["rate"]),
+                next_funding_time=row.get("next_funding_time"),
+                exchange="BINANCE",
             )
             funding_rates.append(funding)
 
@@ -103,7 +92,7 @@ async def get_latest_funding(
             success=True,
             message=f"Retrieved {len(funding_rates)} latest funding rates",
             data=funding_rates,
-            count=len(funding_rates)
+            count=len(funding_rates),
         )
 
     except Exception as e:
@@ -115,7 +104,7 @@ async def get_latest_funding(
 async def get_current_funding(
     symbol: str = Depends(validate_symbol),
     exchange: str = Depends(validate_exchange),
-    ch: ClickHouseService = Depends(get_clickhouse)
+    ch: ClickHouseService = Depends(get_clickhouse),
 ) -> APIResponse:
     """
     获取当前资金费率
@@ -137,26 +126,18 @@ async def get_current_funding(
         result = ch.query(sql, {"symbol": symbol})
 
         if not result:
-            return APIResponse(
-                success=True,
-                message="No funding data found",
-                data=None
-            )
+            return APIResponse(success=True, message="No funding data found", data=None)
 
         row = result[0]
         funding = FundingResponse(
-            timestamp=row['timestamp'],
-            symbol=row['symbol'],
-            rate=float(row['rate']),
-            next_funding_time=row.get('next_funding_time'),
-            exchange="BINANCE"
+            timestamp=row["timestamp"],
+            symbol=row["symbol"],
+            rate=float(row["rate"]),
+            next_funding_time=row.get("next_funding_time"),
+            exchange="BINANCE",
         )
 
-        return APIResponse(
-            success=True,
-            message="Retrieved current funding rate",
-            data=funding
-        )
+        return APIResponse(success=True, message="Retrieved current funding rate", data=funding)
 
     except Exception as e:
         logger.error(f"Error getting current funding: {e}")
@@ -168,7 +149,7 @@ async def get_funding_stats(
     symbol: str = Depends(validate_symbol),
     exchange: str = Depends(validate_exchange),
     days: int = Query(30, ge=1, le=365, description="统计天数"),
-    ch: ClickHouseService = Depends(get_clickhouse)
+    ch: ClickHouseService = Depends(get_clickhouse),
 ) -> APIResponse:
     """
     获取资金费率统计信息
@@ -197,17 +178,11 @@ async def get_funding_stats(
               AND timestamp <= {end_time:DateTime}
         """
 
-        result = ch.query(sql, {
-            "symbol": symbol,
-            "start_time": start_time,
-            "end_time": end_time
-        })
+        result = ch.query(sql, {"symbol": symbol, "start_time": start_time, "end_time": end_time})
 
-        if not result or result[0]['total_records'] == 0:
+        if not result or result[0]["total_records"] == 0:
             return APIResponse(
-                success=True,
-                message="No funding data found",
-                data={"symbol": symbol, "total_records": 0}
+                success=True, message="No funding data found", data={"symbol": symbol, "total_records": 0}
             )
 
         stats = result[0]
@@ -215,27 +190,23 @@ async def get_funding_stats(
             "symbol": symbol,
             "exchange": "BINANCE",
             "time_range_days": days,
-            "total_records": stats['total_records'],
+            "total_records": stats["total_records"],
             "rate_statistics": {
-                "avg": float(stats['avg_rate']) if stats['avg_rate'] else 0,
-                "min": float(stats['min_rate']) if stats['min_rate'] else 0,
-                "max": float(stats['max_rate']) if stats['max_rate'] else 0,
-                "median": float(stats['median_rate']) if stats['median_rate'] else 0,
-                "q25": float(stats['q25_rate']) if stats['q25_rate'] else 0,
-                "q75": float(stats['q75_rate']) if stats['q75_rate'] else 0
+                "avg": float(stats["avg_rate"]) if stats["avg_rate"] else 0,
+                "min": float(stats["min_rate"]) if stats["min_rate"] else 0,
+                "max": float(stats["max_rate"]) if stats["max_rate"] else 0,
+                "median": float(stats["median_rate"]) if stats["median_rate"] else 0,
+                "q25": float(stats["q25_rate"]) if stats["q25_rate"] else 0,
+                "q75": float(stats["q75_rate"]) if stats["q75_rate"] else 0,
             },
             "distribution": {
-                "positive_count": stats['positive_count'],
-                "negative_count": stats['negative_count'],
-                "zero_count": stats['zero_count']
-            }
+                "positive_count": stats["positive_count"],
+                "negative_count": stats["negative_count"],
+                "zero_count": stats["zero_count"],
+            },
         }
 
-        return APIResponse(
-            success=True,
-            message="Retrieved funding statistics",
-            data=stats_data
-        )
+        return APIResponse(success=True, message="Retrieved funding statistics", data=stats_data)
 
     except Exception as e:
         logger.error(f"Error getting funding stats: {e}")
@@ -248,7 +219,7 @@ async def get_historical_funding(
     exchange: str = Depends(validate_exchange),
     days: int = Query(30, ge=1, le=365, description="历史天数"),
     interval_hours: int = Query(8, ge=1, le=24, description="时间间隔(小时)"),
-    ch: ClickHouseService = Depends(get_clickhouse)
+    ch: ClickHouseService = Depends(get_clickhouse),
 ) -> APIResponse:
     """
     获取历史资金费率，按指定间隔聚合
@@ -275,28 +246,26 @@ async def get_historical_funding(
             LIMIT 1000
         """
 
-        result = ch.query(sql, {
-            "symbol": symbol,
-            "start_time": start_time,
-            "end_time": end_time
-        })
+        result = ch.query(sql, {"symbol": symbol, "start_time": start_time, "end_time": end_time})
 
         # 转换结果
         historical_data = []
         for row in result:
-            historical_data.append({
-                "timestamp": row['interval_start'].isoformat(),
-                "avg_rate": float(row['avg_rate']) if row['avg_rate'] else 0,
-                "min_rate": float(row['min_rate']) if row['min_rate'] else 0,
-                "max_rate": float(row['max_rate']) if row['max_rate'] else 0,
-                "record_count": row['record_count']
-            })
+            historical_data.append(
+                {
+                    "timestamp": row["interval_start"].isoformat(),
+                    "avg_rate": float(row["avg_rate"]) if row["avg_rate"] else 0,
+                    "min_rate": float(row["min_rate"]) if row["min_rate"] else 0,
+                    "max_rate": float(row["max_rate"]) if row["max_rate"] else 0,
+                    "record_count": row["record_count"],
+                }
+            )
 
         return APIResponse(
             success=True,
             message=f"Retrieved {len(historical_data)} historical funding periods",
             data=historical_data,
-            count=len(historical_data)
+            count=len(historical_data),
         )
 
     except Exception as e:

@@ -1,10 +1,19 @@
 """
 数据模型模块
 """
-from .database import Base, TradeData, CandleData, FundingData, TickerData, DataGapLog
+
+from .database import Base, CandleData, DataGapLog, FundingData, TickerData, TradeData
 from .schemas import (
-    TradeResponse, CandleResponse, FundingResponse, TickerResponse,
-    HealthResponse, DataStatsResponse, DataGapResponse,
-    APIResponse, ErrorResponse,
-    TimeRangeQuery, CandleQuery, SymbolListQuery
+    APIResponse,
+    CandleQuery,
+    CandleResponse,
+    DataGapResponse,
+    DataStatsResponse,
+    ErrorResponse,
+    FundingResponse,
+    HealthResponse,
+    SymbolListQuery,
+    TickerResponse,
+    TimeRangeQuery,
+    TradeResponse,
 )

@@ -2,29 +2,29 @@
 Cryptofeed API Service 统一入口
 融合数据采集和REST API服务
 """
+
 import asyncio
 import logging
 import signal
 import sys
 from contextlib import asynccontextmanager
-from typing import Dict, Any
+from typing import Any, Dict
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .core import config_manager, settings, init_database, cleanup_database
 from .api import api_router
-from .monitor.main import BinanceAdvancedMonitor
+from .core import config_manager, settings
+from .monitor.collector import BinanceAdvancedMonitor
 from .services.data_backfill import DataBackfillService
 from .services.data_integrity import DataIntegrityChecker
-
 
 # 配置日志
 logging.basicConfig(
     level=logging.INFO if not settings.debug else logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -42,10 +42,6 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Cryptofeed API Service...")
 
     try:
-        # 初始化数据库
-        logger.info("Initializing database...")
-        await init_database()
-
         # 启动数据采集服务
         if settings.monitor_enabled:
             logger.info("Starting data collection monitor...")
@@ -98,10 +94,6 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"Error stopping monitor: {e}")
 
-        # 清理数据库连接
-        logger.info("Cleaning up database connections...")
-        await cleanup_database()
-
         logger.info("Cryptofeed API Service stopped")
 
 
@@ -128,15 +120,16 @@ async def run_backfill_service():
         logger.info("🔍 Starting historical data backfill service...")
 
         # 从配置获取符号列表和补充策略
-        symbols = config_manager.get('symbols.custom_list', [])
+        symbols = config_manager.get("symbols.custom_list", [])
         if not symbols:
             logger.warning("No symbols configured for monitoring")
             return
 
-        backfill_config = config_manager.get('backfill_strategy', {})
-        candle_backfill_days = backfill_config.get('candles', {})
+        backfill_config = config_manager.get("backfill_strategy", {})
+        candle_backfill_days = backfill_config.get("candles", {})
 
         from datetime import datetime, timedelta
+
         end_time = datetime.utcnow()
 
         logger.info(f"📋 Checking backfill for {len(symbols)} symbols from config")
@@ -147,9 +140,7 @@ async def run_backfill_service():
             logger.info(f"🕐 Checking {interval} candles for last {days} days...")
 
             for symbol in symbols:
-                gaps = await integrity_checker.check_candle_gaps(
-                    symbol, interval, start_time, end_time
-                )
+                gaps = await integrity_checker.check_candle_gaps(symbol, interval, start_time, end_time)
                 if gaps:
                     logger.info(f"🔧 Found {len(gaps)} {interval} candle gaps for {symbol}, starting backfill...")
                     await backfill_service.backfill_candle_gaps(gaps)
@@ -157,19 +148,17 @@ async def run_backfill_service():
                     logger.debug(f"✅ No {interval} gaps found for {symbol}")
 
         # 检查交易数据补充
-        trade_days = backfill_config.get('trades', 30)
+        trade_days = backfill_config.get("trades", 30)
         trade_start_time = end_time - timedelta(days=trade_days)
         logger.info(f"📊 Checking trade data for last {trade_days} days...")
 
         for symbol in symbols:
-            trade_gaps = await integrity_checker.check_trade_continuity(
-                symbol, trade_start_time, end_time
-            )
+            trade_gaps = await integrity_checker.check_trade_continuity(symbol, trade_start_time, end_time)
             if trade_gaps:
                 logger.info(f"🔧 Found {len(trade_gaps)} trade gaps for {symbol}")
 
         # 检查资金费率数据补充
-        funding_days = backfill_config.get('funding', 90)
+        funding_days = backfill_config.get("funding", 90)
         funding_start_time = end_time - timedelta(days=funding_days)
         logger.info(f"💰 Checking funding data for last {funding_days} days...")
 
@@ -188,6 +177,7 @@ async def run_backfill_service():
     except Exception as e:
         logger.error(f"Backfill service error: {e}")
         import traceback
+
         traceback.print_exc()
         raise
 
@@ -199,7 +189,7 @@ app = FastAPI(
     description="Cryptocurrency data collection and API service",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # 添加CORS中间件
@@ -224,8 +214,8 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
             "success": False,
             "message": "Internal server error",
             "error_code": "INTERNAL_ERROR",
-            "path": str(request.url.path)
-        }
+            "path": str(request.url.path),
+        },
     )
 
 
@@ -258,7 +248,7 @@ async def root() -> Dict[str, Any]:
         "status": "running",
         "docs": "/docs",
         "health": f"{settings.api_prefix}/v1/health",
-        "data_collection": settings.monitor_enabled
+        "data_collection": settings.monitor_enabled,
     }
 
 
@@ -283,8 +273,8 @@ async def service_status() -> Dict[str, Any]:
         "configuration": {
             "debug": settings.debug,
             "monitor_enabled": settings.monitor_enabled,
-            "monitor_symbols": settings.monitor_symbols
-        }
+            "monitor_symbols": settings.monitor_symbols,
+        },
     }
 
 
@@ -306,12 +296,12 @@ def main():
 
     # 启动uvicorn服务器
     uvicorn.run(
-        "cryptofeed_api.main:app",
+        "cryptofeed_api.app:app",
         host=settings.api_host,
         port=settings.api_port,
         reload=settings.debug,
         log_level="debug" if settings.debug else "info",
-        access_log=True
+        access_log=True,
     )
 
 
