@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-配置管理模块
-读取YAML配置文件并提供配置访问接口
+配置管理模块 - 重定向到统一配置管理器
+
+为了向后兼容，这个模块现在直接使用 core.config 的配置管理器。
+所有配置都通过环境变量 ENV 来选择 dev.yaml 或 prod.yaml。
 """
 import os
 from pathlib import Path
@@ -10,19 +12,24 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+# 导入统一的配置管理器
+from ..core.config import config_manager as core_config_manager
+
 
 class Config:
-    """配置管理器"""
+    """配置管理器（兼容层，重定向到 core.config_manager）"""
 
     def __init__(self, config_file: Optional[str] = None):
         """初始化配置管理器
 
         Args:
-            config_file: 配置文件路径,如果为None则使用默认路径
+            config_file: 配置文件路径（已废弃，现在通过 ENV 环境变量控制）
         """
-        self.data = {}
+        # 使用统一的配置管理器
+        self._core_config = core_config_manager
+        self.data = self._core_config._config_data
 
-        # 默认配置
+        # 默认配置（作为后备）
         self.default_config = {
             "database": {
                 "host": "127.0.0.1",
@@ -55,17 +62,7 @@ class Config:
             "logging": {"level": "INFO", "filename": "logs/cryptofeed_monitor.log"},
         }
 
-        # 加载配置文件
-        if config_file:
-            self.load_config(config_file)
-        else:
-            # 尝试从默认位置加载
-            project_root = Path(__file__).parent.parent.parent
-            config_path = project_root / "config" / "main.yaml"
-            if config_path.exists():
-                self.load_config(str(config_path))
-            else:
-                self.data = self.default_config
+        # 如果配置文件为空，则已经通过 core_config_manager 加载了
 
     def load_config(self, config_file: str) -> None:
         """加载配置文件
@@ -112,29 +109,8 @@ class Config:
         Returns:
             配置值,如果不存在则返回默认值
         """
-
-        # 首先检查环境变量
-        env_key = key.replace(".", "_").upper()
-        if env_key in os.environ:
-            env_value = os.environ[env_key]
-            # 尝试转换为适当的类型
-            if env_value.lower() in ("true", "false"):
-                return env_value.lower() == "true"
-            elif env_value.isdigit():
-                return int(env_value)
-            else:
-                return env_value
-
-        # 回退到配置文件值
-        keys = key.split(".")
-        value = self.data
-
-        try:
-            for k in keys:
-                value = value[k]
-            return value
-        except (KeyError, TypeError):
-            return default
+        # 直接使用统一的配置管理器
+        return self._core_config.get(key, default)
 
 
 # 全局配置实例

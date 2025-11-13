@@ -46,6 +46,9 @@ class ClickHouseBackend:
         self.batch_timeout = batch_timeout
         self.max_retries = max_retries
 
+        # 兼容 cryptofeed 的 Backend 基类（需要 queue 属性）
+        self.queue = None
+
         # 数据缓冲区
         self.buffer: Dict[str, List[Dict]] = {
             "trades": [],
@@ -103,6 +106,10 @@ class ClickHouseBackend:
         # 取消定期刷新任务
         if self.flush_task:
             self.flush_task.cancel()
+            try:
+                await self.flush_task
+            except asyncio.CancelledError:
+                pass
 
         # 关闭连接
         if self.http_session:

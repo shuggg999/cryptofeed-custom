@@ -1,0 +1,126 @@
+# Cryptofeed 生产环境配置
+# 用于 Docker 部署的生产环境
+
+# ========================================
+# 环境标识
+# ========================================
+environment: production
+
+# ========================================
+# API 服务配置（生产环境端口）
+# ========================================
+api:
+  host: "0.0.0.0"
+  port: 8888  # 生产环境使用标准端口 8888
+  debug: false
+  reload: false  # 生产环境不自动重载
+
+# ========================================
+# ClickHouse 数据库配置（生产数据库）
+# ========================================
+clickhouse:
+  host: localhost
+  port: 8123
+  user: default
+  password: password123
+  database: cryptofeed  # 生产环境数据库
+  secure: false
+
+# ========================================
+# 交易对配置（生产环境监控完整列表）
+# ========================================
+symbols:
+  mode: "custom"
+  custom_list:
+    - "BTC-USDT-PERP"
+    - "ETH-USDT-PERP"
+    - "SOL-USDT-PERP"
+    - "DOGE-USDT-PERP"
+    - "ADA-USDT-PERP"
+
+# ========================================
+# 数据收集类型（生产环境完整配置）
+# ========================================
+collection:
+  data_types:
+    - trades
+    - funding
+    - candles_1m
+    - candles_5m
+    - candles_30m
+    - candles_4h
+    - candles_1d
+    - liquidations
+    - open_interest
+
+# ========================================
+# 数据保留策略（生产环境长期保留）
+# ========================================
+data_retention:
+  candles:
+    "1m": 30      # 1分钟K线：30天
+    "5m": 90      # 5分钟K线：90天
+    "15m": 180    # 15分钟K线：180天
+    "30m": 365    # 30分钟K线：1年
+    "4h": 730     # 4小时K线：2年
+    "1d": 1095    # 日K线：3年
+
+  trades: 90           # 交易数据：90天
+  funding: 365         # 资金费率：1年
+  liquidations: 180    # 清算数据：180天
+  open_interest: 365   # 持仓量：1年
+
+# ========================================
+# 历史数据回填配置（生产环境启用）
+# ========================================
+data_backfill:
+  enabled: true
+  smart_mode: true
+  startup_backfill: true
+  check_interval_hours: 6
+  max_concurrent_tasks: 5
+
+  smart_backfill:
+    quick_check: true
+    priority_strategy:
+      urgent_threshold_hours: 1
+      recent_threshold_hours: 24
+      daily_threshold_days: 7
+    concurrent_pools:
+      urgent: 3
+      recent: 2
+      historical: 1
+
+  rate_limits:
+    retry_attempts: 3
+    batch_size: 1500
+    request_delay_ms: 50
+
+# ========================================
+# 监控配置（生产环境端口）
+# ========================================
+monitoring:
+  metrics_enabled: true
+  health_check_port: 8080  # 生产环境使用 8080
+  stats_interval: 300
+
+# ========================================
+# 日志配置（生产环境标准日志）
+# ========================================
+logging:
+  level: INFO  # 生产环境使用 INFO 级别
+  filename: logs/cryptofeed_monitor.log
+  console: false  # 生产环境不输出到控制台（Docker 会收集）
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  rotation:  # 日志轮转
+    max_bytes: 104857600  # 100MB
+    backup_count: 10
+
+# ========================================
+# 生产环境安全配置
+# ========================================
+security:
+  # 生产环境的安全设置
+  enable_api_key: false  # 是否启用 API Key 认证
+  allowed_origins: []    # CORS 允许的来源（空表示全部）
+  rate_limiting: true    # 启用速率限制

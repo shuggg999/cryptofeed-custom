@@ -71,30 +71,39 @@ class RateLimitedFundingClickHouse:
             current_time = time.time()
             symbol = funding.symbol
 
-            # Check if we should save this update (1.txt minute interval)
+            # Check if we should save this update (1 minute interval)
             if symbol not in self.last_save_times or current_time - self.last_save_times[symbol] >= self.save_interval:
 
+                # Determine if this is a settlement time (00:00, 08:00, 16:00 UTC)
+                timestamp_dt = datetime.fromtimestamp(funding.timestamp) if funding.timestamp else datetime.now()
+                hour = timestamp_dt.hour
+                minute = timestamp_dt.minute
+                # Consider it settlement time if within 1 minute of 00:00, 08:00, or 16:00 UTC
+                is_settlement = hour in [0, 8, 16] and minute <= 1
+
                 # Save to database
-                await self._save_to_database(funding, receipt_timestamp)
+                await self._save_to_database(funding, receipt_timestamp, is_settlement)
 
                 # Update last save time
                 self.last_save_times[symbol] = current_time
 
-                logger.info(f"💰 Funding saved: {symbol} Rate: {funding.rate:.6f}")
+                # Log with settlement indicator
+                settlement_flag = "🔔 SETTLEMENT" if is_settlement else ""
+                logger.info(f"💰 Funding saved: {symbol} Rate: {funding.rate:.6f} {settlement_flag}")
 
         except Exception as e:
             logger.error(f"Rate limited funding backend error: {e}")
 
-    async def _save_to_database(self, funding, receipt_timestamp):
+    async def _save_to_database(self, funding, receipt_timestamp, is_settlement):
         """Save funding data to PostgreSQL database"""
         try:
             # Run in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._sync_save, funding, receipt_timestamp)
+            await loop.run_in_executor(None, self._sync_save, funding, receipt_timestamp, is_settlement)
         except Exception as e:
             logger.error(f"Database save error: {e}")
 
-    def _sync_save(self, funding, receipt_timestamp):
+    def _sync_save(self, funding, receipt_timestamp, is_settlement):
         """Synchronous database save"""
         try:
             client = clickhouse_connect.get_client(
@@ -106,9 +115,12 @@ class RateLimitedFundingClickHouse:
             )
 
             # Prepare data for ClickHouse insertion (match table schema order)
-            # Schema: timestamp, exchange, symbol, rate, mark_price, next_funding_time, predicted_rate, receipt_timestamp, date
+            # Schema: timestamp, exchange, symbol, rate, mark_price, next_funding_time, predicted_rate, receipt_timestamp, date, is_settlement
+
+            timestamp_dt = datetime.fromtimestamp(funding.timestamp) if funding.timestamp else datetime.now()
+
             data = [
-                datetime.fromtimestamp(funding.timestamp) if funding.timestamp else datetime.now(),
+                timestamp_dt,
                 funding.exchange,
                 funding.symbol,
                 float(funding.rate) if funding.rate else 0.0,
@@ -116,10 +128,11 @@ class RateLimitedFundingClickHouse:
                 datetime.fromtimestamp(funding.next_funding_time) if funding.next_funding_time else datetime.now(),
                 float(funding.predicted_rate) if hasattr(funding, "predicted_rate") and funding.predicted_rate else 0.0,
                 datetime.fromtimestamp(receipt_timestamp) if receipt_timestamp else datetime.now(),
-                datetime.fromtimestamp(funding.timestamp).date() if funding.timestamp else datetime.now().date(),
+                timestamp_dt.date(),
+                1 if is_settlement else 0,
             ]
 
-            # Column names for funding table: timestamp, exchange, symbol, rate, mark_price, next_funding_time, predicted_rate, receipt_timestamp, date
+            # Column names for funding table: timestamp, exchange, symbol, rate, mark_price, next_funding_time, predicted_rate, receipt_timestamp, date, is_settlement
             columns = [
                 "timestamp",
                 "exchange",
@@ -130,6 +143,7 @@ class RateLimitedFundingClickHouse:
                 "predicted_rate",
                 "receipt_timestamp",
                 "date",
+                "is_settlement",
             ]
             client.insert("funding", [data], column_names=columns)
             client.close()
@@ -1167,8 +1181,12 @@ class BinanceAdvancedMonitor:
             def run_feed():
                 """在单独线程中运行FeedHandler的事件循环"""
                 try:
-                    # FeedHandler需要自己的事件循环
-                    self.feed_handler.run()
+                    # 在新线程中创建并设置 event loop（FeedHandler 需要）
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                    # 运行 FeedHandler（禁用信号处理器，因为只能在主线程中注册）
+                    self.feed_handler.run(install_signal_handlers=False)
                 except Exception as e:
                     logger.error(f"FeedHandler error: {e}")
 
